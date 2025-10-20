@@ -32,7 +32,13 @@ func simulate_turn() -> MatchRound:
 	round.thrower = thrower
 	round.target = target
 
-	round.outcome = resolve_throw(thrower, target)
+	var result = resolve_throw(thrower, target)
+	round.outcome = result["outcome"]
+	round.throw_power = result["throw_power"]
+	round.dodge_power = result["dodge_power"]
+	round.catch_power = result["catch_power"]
+	round.roll = result["roll"]
+
 	round.commentary = generate_commentary(round)
 
 	if round.outcome == "Caught":
@@ -49,7 +55,7 @@ func simulate_turn() -> MatchRound:
 	return round
 
 # 🧩 Throw Resolution Logic
-func resolve_throw(thrower: Player, target: Player) -> String:
+func resolve_throw(thrower: Player, target: Player) -> Dictionary:
 	var accuracy = thrower.stats["accuracy"]
 	var ferocity = thrower.stats["ferocity"]
 	var throw_power = accuracy + ferocity
@@ -57,15 +63,25 @@ func resolve_throw(thrower: Player, target: Player) -> String:
 	var dodge_power = target.stats["instinct"] + target.stats["hustle"]
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
 
-	var roll = randi() % (throw_power + dodge_power + catch_power)
+	var total = throw_power + dodge_power + catch_power
+	var roll = randi() % total
 
+	var outcome := ""
 	if roll < dodge_power:
-		return "Dodged"
+		outcome = "Dodged"
 	elif roll < dodge_power + catch_power:
-		return "Caught"
+		outcome = "Caught"
 	else:
 		target.eliminate()
-		return "Hit"
+		outcome = "Hit"
+
+	return {
+		"outcome": outcome,
+		"throw_power": throw_power,
+		"dodge_power": dodge_power,
+		"catch_power": catch_power,
+		"roll": roll
+	}
 
 # 🧩 Revival Logic
 func revive_teammate(thrower: Player) -> Player:
