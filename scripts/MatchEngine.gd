@@ -7,7 +7,7 @@ var rounds: Array = []
 var turn_count: int = 0
 
 # 🧩 Simulate a Turn
-func simulate_turn():
+func simulate_turn() -> MatchRound:
 	turn_count += 1
 
 	var alive_players = []
@@ -17,7 +17,7 @@ func simulate_turn():
 
 	if alive_players.size() < 2:
 		print("Not enough players to simulate a turn.")
-		return
+		return null
 
 	var thrower = alive_players[randi() % alive_players.size()]
 	var target_pool = []
@@ -46,10 +46,10 @@ func simulate_turn():
 		p.ball_held = p == round.ball_holder_after
 
 	rounds.append(round)
+	return round
 
 # 🧩 Throw Resolution Logic
 func resolve_throw(thrower: Player, target: Player) -> String:
-	# Placeholder — we’ll wire in stat-based logic later
 	var outcomes = ["Dodged", "Caught", "Hit"]
 	return outcomes[randi() % outcomes.size()]
 
@@ -86,3 +86,69 @@ func generate_commentary(round: MatchRound) -> String:
 	else:
 		var fallback = "%s_Default" % round.outcome
 		return templates.get(fallback, "A moment passes.").format(round.target.name, round.thrower.name)
+
+# 🧩 Player Setup
+func setup_players():
+	var Player = preload("res://scripts/Player.gd")
+
+	var p1 = Player.new()
+	p1.name = "Hothead"
+	p1.team = "Red"
+	p1.archetype = "Hothead"
+	p1.stats = {
+		"accuracy": 7,
+		"ferocity": 8,
+		"instinct": 3,
+		"hustle": 4,
+		"hands": 4,
+		"backbone": 2
+	}
+
+	var p2 = Player.new()
+	p2.name = "Ghost"
+	p2.team = "Blue"
+	p2.archetype = "Ghost"
+	p2.stats = {
+		"accuracy": 4,
+		"ferocity": 3,
+		"instinct": 8,
+		"hustle": 7,
+		"hands": 5,
+		"backbone": 6
+	}
+
+	var p3 = Player.new()
+	p3.name = "Strategist"
+	p3.team = "Red"
+	p3.archetype = "Strategist"
+	p3.stats = {
+		"accuracy": 6,
+		"ferocity": 5,
+		"instinct": 6,
+		"hustle": 5,
+		"hands": 6,
+		"backbone": 5
+	}
+
+	var p4 = Player.new()
+	p4.name = "Wildcard"
+	p4.team = "Blue"
+	p4.archetype = "Wildcard"
+	p4.stats = {
+		"accuracy": 5,
+		"ferocity": 6,
+		"instinct": 2,
+		"hustle": 6,
+		"hands": 3,
+		"backbone": 4
+	}
+
+	players = [p1, p2, p3, p4]
+
+# 🧩 Entry Point
+func _ready():
+	setup_players()
+	var round = simulate_turn()
+	if round != null:
+		print("Turn %d: %s throws at %s → %s" % [round.turn, round.thrower.name, round.target.name, round.outcome])
+		print("Commentary: %s" % round.commentary)
