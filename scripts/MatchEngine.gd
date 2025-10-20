@@ -50,8 +50,22 @@ func simulate_turn() -> MatchRound:
 
 # 🧩 Throw Resolution Logic
 func resolve_throw(thrower: Player, target: Player) -> String:
-	var outcomes = ["Dodged", "Caught", "Hit"]
-	return outcomes[randi() % outcomes.size()]
+	var accuracy = thrower.stats["accuracy"]
+	var ferocity = thrower.stats["ferocity"]
+	var throw_power = accuracy + ferocity
+
+	var dodge_power = target.stats["instinct"] + target.stats["hustle"]
+	var catch_power = target.stats["hands"] + target.stats["backbone"]
+
+	var roll = randi() % (throw_power + dodge_power + catch_power)
+
+	if roll < dodge_power:
+		return "Dodged"
+	elif roll < dodge_power + catch_power:
+		return "Caught"
+	else:
+		target.eliminate()
+		return "Hit"
 
 # 🧩 Revival Logic
 func revive_teammate(thrower: Player) -> Player:
