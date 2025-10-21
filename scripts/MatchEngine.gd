@@ -2,15 +2,16 @@ extends Node
 class_name MatchEngine
 
 # 🧩 Core State
-var players: Array = []
-var rounds: Array = []
-var turn_count: int = 0
-var rng := RandomNumberGenerator.new()
+var players: Array = []              # All players in the match
+var rounds: Array = []               # History of MatchRound objects
+var turn_count: int = 0              # Tracks current turn number
+var rng := RandomNumberGenerator.new()  # Seeded RNG for reproducibility
 
 # 🧩 Simulate a Turn
 func simulate_turn() -> MatchRound:
 	turn_count += 1
 
+	# Filter alive players
 	var alive_players = []
 	for p in players:
 		if p.alive:
@@ -20,14 +21,15 @@ func simulate_turn() -> MatchRound:
 		print("Not enough players to simulate a turn.")
 		return null
 
+	# Randomly select thrower and target
 	var thrower = alive_players[rng.randi_range(0, alive_players.size() - 1)]
 	var target_pool = []
 	for p in alive_players:
 		if p != thrower:
 			target_pool.append(p)
-
 	var target = target_pool[rng.randi_range(0, target_pool.size() - 1)]
 
+	# Create and populate MatchRound
 	var round = MatchRound.new()
 	round.turn = turn_count
 	round.thrower = thrower
@@ -42,6 +44,7 @@ func simulate_turn() -> MatchRound:
 
 	round.commentary = generate_commentary(round)
 
+	# Handle revival if caught
 	if round.outcome == "Caught":
 		var revived = revive_teammate(thrower)
 		round.revived_player = revived
@@ -49,6 +52,7 @@ func simulate_turn() -> MatchRound:
 	else:
 		round.ball_holder_after = target
 
+	# Update ball possession
 	for p in players:
 		p.ball_held = p == round.ball_holder_after
 
@@ -57,13 +61,9 @@ func simulate_turn() -> MatchRound:
 
 # 🧩 Throw Resolution Logic
 func resolve_throw(thrower: Player, target: Player, rng: RandomNumberGenerator) -> Dictionary:
-	var accuracy = thrower.stats["accuracy"]
-	var ferocity = thrower.stats["ferocity"]
-	var throw_power = accuracy + ferocity
-
+	var throw_power = thrower.stats["accuracy"] + thrower.stats["ferocity"]
 	var dodge_power = target.stats["instinct"] + target.stats["hustle"]
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
-
 	var total = throw_power + dodge_power + catch_power
 	var roll = rng.randi_range(0, total - 1)
 
@@ -118,86 +118,121 @@ func generate_commentary(round: MatchRound) -> String:
 		var fallback = "%s_Default" % round.outcome
 		return templates.get(fallback, "A moment passes.").format(round.target.name, round.thrower.name)
 
-# 🧩 Player Setup
-func setup_players():
-	var Player = preload("res://scripts/Player.gd")
+# 🧩 Clutch Detection
+func detect_clutch(round: MatchRound) -> bool:
+	var dodge_cutoff = round.dodge_power
+	var catch_cutoff = round.dodge_power + round.catch_power
+	var total = round.throw_power + round.dodge_power + round.catch_power
+	var roll = round.roll
 
-	var p1 = Player.new()
-	p1.name = "Hothead"
-	p1.team = "Red"
-	p1.archetype = "Hothead"
-	p1.stats = {
-		"accuracy": 7,
-		"ferocity": 8,
-		"instinct": 3,
-		"hustle": 4,
-		"hands": 4,
-		"backbone": 2
-	}
+	if abs(roll - dodge_cutoff) <= 2:
+		return true
+	elif abs(roll - catch_cutoff) <= 2:
+		return true
+	elif abs(roll - total) <= 2:
+		return true
 
-	var p2 = Player.new()
-	p2.name = "Ghost"
-	p2.team = "Blue"
-	p2.archetype = "Ghost"
-	p2.stats = {
-		"accuracy": 4,
-		"ferocity": 3,
-		"instinct": 8,
-		"hustle": 7,
-		"hands": 5,
-		"backbone": 6
-	}
-
-	var p3 = Player.new()
-	p3.name = "Strategist"
-	p3.team = "Red"
-	p3.archetype = "Strategist"
-	p3.stats = {
-		"accuracy": 6,
-		"ferocity": 5,
-		"instinct": 6,
-		"hustle": 5,
-		"hands": 6,
-		"backbone": 5
-	}
-
-	var p4 = Player.new()
-	p4.name = "Wildcard"
-	p4.team = "Blue"
-	p4.archetype = "Wildcard"
-	p4.stats = {
-		"accuracy": 5,
-		"ferocity": 6,
-		"instinct": 2,
-		"hustle": 6,
-		"hands": 3,
-		"backbone": 4
-	}
-
-	players = [p1, p2, p3, p4]
-
-# 🧩 Entry Point
-func _ready():
-	rng.seed = 123456
-	setup_players()
-	simulate_match()
+	return false
 
 # 🧩 Full Match Simulation
-func simulate_match():
+func simulate_match() -> String:
 	while true:
+		# Check which teams still have alive players
 		var alive_teams := {}
 		for p in players:
 			if p.alive:
 				alive_teams[p.team] = true
 
 		if alive_teams.size() < 2:
-			print("Match over! Winning team: %s" % alive_teams.keys()[0])
+			var winner = alive_teams.keys()[0]
+			print("Match over! Winning team: %s" % winner)
+			return winner
+
+		# Simulate a turn
+		var round = simulate_turn()
+		if round == null:
+			print("Simulation failed — no valid turn.")
 			break
 
-		var round = simulate_turn()
-		if round != null:
-			print("Turn %d: %s throws at %s → %s" % [round.turn, round.thrower.name, round.target.name, round.outcome])
-			print("Commentary: %s" % round.commentary)
-			print("Stats — Throw: %d | Dodge: %d | Catch: %d | Roll: %d" %
-				[round.throw_power, round.dodge_power, round.catch_power, round.roll])
-			print("-----")
+		# Print round summary
+		print("Turn %d: %s throws at %s → %s" % [round.turn, round.thrower.name, round.target.name, round.outcome])
+		print("Commentary: %s" % round.commentary)
+		print("Stats — Throw: %d | Dodge: %d | Catch: %d | Roll: %d" %
+			[round.throw_power, round.dodge_power, round.catch_power, round.roll])
+		print("-----")
+
+		# Detect clutch play
+		if detect_clutch(round):
+			print("🔥 Clutch play detected!")
+			round.target.clutch_streak += 1
+		else:
+			round.target.clutch_streak = 0
+
+		# Reset streaks for uninvolved players
+		for p in players:
+			if p != round.target and p != round.thrower:
+				p.hit_streak = 0
+				p.dodge_streak = 0
+				p.catch_streak = 0
+				p.clutch_streak = 0
+
+		# Apply streak logic
+		match round.outcome:
+			"Hit":
+				round.thrower.hit_streak += 1
+				round.target.hit_streak = 0
+				round.target.dodge_streak = 0
+				round.target.catch_streak = 0
+			"Dodged":
+				round.target.dodge_streak += 1
+				round.thrower.hit_streak = 0
+			"Caught":
+				round.target.catch_streak += 1
+				round.thrower.hit_streak = 0
+
+		# Snapshot streaks for logging
+		round.thrower_hit_streak = round.thrower.hit_streak
+		round.target_dodge_streak = round.target.dodge_streak
+		round.target_catch_streak = round.target.catch_streak
+		round.target_clutch_streak = round.target.clutch_streak
+
+		# Trigger streak commentary
+		if round.thrower.hit_streak >= 3:
+			print("🔥 %s is on a hit streak!" % round.thrower.name)
+		if round.target.dodge_streak >= 3:
+			print("🌀 %s is dodging everything!" % round.target.name)
+		if round.target.catch_streak >= 3:
+			print("🧤 %s is catching fire!" % round.target.name)
+		if round.target.clutch_streak >= 3:
+			print("💥 %s thrives under pressure!" % round.target.name)
+
+	# Fallback return
+	return "Unknown"
+
+# 🧩 Series Simulation (Best of 3)
+func simulate_series():
+	var red_wins = 0
+	var blue_wins = 0
+	var match_number = 1
+
+	while red_wins < 2 and blue_wins < 2:
+		reset_players()
+		print("Match %d begins!" % match_number)
+		var winner = simulate_match()
+		if winner == "Red":
+			red_wins += 1
+		else:
+			blue_wins += 1
+		match_number += 1
+
+	print("Series over! %s wins the best-of-3!" % ("Red" if red_wins > blue_wins else "Blue"))
+
+# 🧩 Reset Players Between Matches
+func reset_players():
+	for p in players:
+		p.alive = true
+		p.ball_held = false
+		p.hit_streak = 0
+		p.dodge_streak = 0
+		p.catch_streak = 0
+		p.clutch_streak
