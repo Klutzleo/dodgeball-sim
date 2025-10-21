@@ -5,6 +5,7 @@ class_name MatchEngine
 var players: Array = []
 var rounds: Array = []
 var turn_count: int = 0
+var rng := RandomNumberGenerator.new()
 
 # 🧩 Simulate a Turn
 func simulate_turn() -> MatchRound:
@@ -19,20 +20,20 @@ func simulate_turn() -> MatchRound:
 		print("Not enough players to simulate a turn.")
 		return null
 
-	var thrower = alive_players[randi() % alive_players.size()]
+	var thrower = alive_players[rng.randi_range(0, alive_players.size() - 1)]
 	var target_pool = []
 	for p in alive_players:
 		if p != thrower:
 			target_pool.append(p)
 
-	var target = target_pool[randi() % target_pool.size()]
+	var target = target_pool[rng.randi_range(0, target_pool.size() - 1)]
 
 	var round = MatchRound.new()
 	round.turn = turn_count
 	round.thrower = thrower
 	round.target = target
 
-	var result = resolve_throw(thrower, target)
+	var result = resolve_throw(thrower, target, rng)
 	round.outcome = result["outcome"]
 	round.throw_power = result["throw_power"]
 	round.dodge_power = result["dodge_power"]
@@ -55,7 +56,7 @@ func simulate_turn() -> MatchRound:
 	return round
 
 # 🧩 Throw Resolution Logic
-func resolve_throw(thrower: Player, target: Player) -> Dictionary:
+func resolve_throw(thrower: Player, target: Player, rng: RandomNumberGenerator) -> Dictionary:
 	var accuracy = thrower.stats["accuracy"]
 	var ferocity = thrower.stats["ferocity"]
 	var throw_power = accuracy + ferocity
@@ -64,7 +65,7 @@ func resolve_throw(thrower: Player, target: Player) -> Dictionary:
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
 
 	var total = throw_power + dodge_power + catch_power
-	var roll = randi() % total
+	var roll = rng.randi_range(0, total - 1)
 
 	var outcome := ""
 	if roll < dodge_power:
@@ -177,8 +178,26 @@ func setup_players():
 
 # 🧩 Entry Point
 func _ready():
+	rng.seed = 123456
 	setup_players()
-	var round = simulate_turn()
-	if round != null:
-		print("Turn %d: %s throws at %s → %s" % [round.turn, round.thrower.name, round.target.name, round.outcome])
-		print("Commentary: %s" % round.commentary)
+	simulate_match()
+
+# 🧩 Full Match Simulation
+func simulate_match():
+	while true:
+		var alive_teams := {}
+		for p in players:
+			if p.alive:
+				alive_teams[p.team] = true
+
+		if alive_teams.size() < 2:
+			print("Match over! Winning team: %s" % alive_teams.keys()[0])
+			break
+
+		var round = simulate_turn()
+		if round != null:
+			print("Turn %d: %s throws at %s → %s" % [round.turn, round.thrower.name, round.target.name, round.outcome])
+			print("Commentary: %s" % round.commentary)
+			print("Stats — Throw: %d | Dodge: %d | Catch: %d | Roll: %d" %
+				[round.throw_power, round.dodge_power, round.catch_power, round.roll])
+			print("-----")
