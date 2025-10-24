@@ -9,16 +9,16 @@ var commentary: String
 var revived_player: Player = null
 var ball_holder_after: Player = null
 
-# 🪓 New: Stat breakdown
+# 🪓 Stat breakdown
 var throw_power: int = 0
 var dodge_power: int = 0
 var catch_power: int = 0
 var roll: int = 0
 
 # Clutch detection
-var was_clutch:bool = false
+var was_clutch: bool = false
 
-# Streak
+# Streaks
 var thrower_hit_streak: int = 0
 var target_dodge_streak: int = 0
 var target_catch_streak: int = 0
