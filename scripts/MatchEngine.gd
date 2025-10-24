@@ -132,6 +132,49 @@ func detect_clutch(round: MatchRound) -> bool:
 
 	return abs(roll - dodge_cutoff) <= 2 or abs(roll - catch_cutoff) <= 2 or abs(roll - total) <= 2
 
+func simulate_reaction_queue(current_time: float) -> void:
+	for p in players:
+		if not p.alive or not p.ball_held:
+			continue
+
+		if p.reaction_timer <= current_time:
+			var target_pool := players.filter(func(t): return t.alive and t.team != p.team)
+			if target_pool.size() == 0:
+				continue
+
+			var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
+			var round := MatchRound.new()
+			round.turn = turn_count
+			round.thrower = p
+			round.target = target
+
+			var result = resolve_throw(p, target, rng)
+			round.outcome = result["outcome"]
+			round.throw_power = result["throw_power"]
+			round.dodge_power = result["dodge_power"]
+			round.catch_power = result["catch_power"]
+			round.roll = result["roll"]
+			round.commentary = generate_commentary(round)
+
+			if round.outcome == "Caught":
+				var revived = revive_teammate(p)
+				round.revived_player = revived
+				round.ball_holder_after = revived if revived else target
+			else:
+				round.ball_holder_after = target
+
+			for q in players:
+				q.ball_held = q == round.ball_holder_after
+
+			rounds.append(round)
+			print("⏱️ %s acted at %.2f seconds → %s" % [p.name, current_time, round.outcome])
+			print("Commentary: %s" % round.commentary)
+
+			# Reset reaction timer for next action
+			var base_time = 6.0
+			var modifier = 0.5
+			p.reaction_timer = current_time + base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
+
 # 🧩 Full Match Simulation
 func simulate_match() -> String:
 	while true:
@@ -217,4 +260,13 @@ func simulate_series():
 	while red_wins < 2 and blue_wins < 2:
 		reset_players()
 		print("Match %d begins!" % match_number)
-		var winner
+		var winner = simulate_match()
+		if winner == "Red":
+			red_wins += 1
+		elif winner == "Blue":
+			blue_wins += 1
+		else:
+			print("⚠️ Unexpected result: %s" % winner)
+		match_number += 1
+
+	print("🏆 Series over! %s wins the best-of-3!" % ("Red" if red_wins > blue_wins else "Blue"))
