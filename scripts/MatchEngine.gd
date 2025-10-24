@@ -35,6 +35,39 @@ func simulate_turn() -> MatchRound:
 	round.thrower = thrower
 	round.target = target
 
+func simulate_opening_rush(players: Array) -> void:
+	var ball_grab_scores := []
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+
+	# Step 1: Calculate ball grab scores
+	for p in players:
+		var score = p.stats["hustle"] + p.stats["ferocity"] + rng.randi_range(0, 5)
+		ball_grab_scores.append({ "player": p, "score": score })
+
+	# Step 2: Sort by score descending
+	ball_grab_scores.sort_custom(self, "_sort_by_score")
+
+	# Step 3: Assign balls to top 6
+	for i in range(6):
+		var p = ball_grab_scores[i]["player"]
+		p.ball_held = true
+		p.commentary.append("🏃‍♂️ Grabbed a ball in the opening rush!")
+
+		# Step 4: Set reaction delay based on instinct
+		var base_time = 6.0
+		var modifier = 0.5
+		var reaction_time = base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
+		p.reaction_timer = reaction_time
+
+	# Optional: Commentary for others
+	for i in range(6, ball_grab_scores.size()):
+		var p = ball_grab_scores[i]["player"]
+		p.commentary.append("😬 Missed the ball scramble.")
+
+func _sort_by_score(a, b):
+	return b["score"] - a["score"]
+
 	var result = resolve_throw(thrower, target, rng)
 	round.outcome = result["outcome"]
 	round.throw_power = result["throw_power"]

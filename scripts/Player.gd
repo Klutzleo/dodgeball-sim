@@ -13,6 +13,8 @@ var stats: Dictionary = {
 }
 var alive: bool = true
 var ball_held: bool = false
+var reaction_timer: float = 0.0
+var commentary: Array = []
 
 func revive():
 	alive = true
