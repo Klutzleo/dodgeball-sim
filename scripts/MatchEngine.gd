@@ -202,6 +202,11 @@ func simulate_match() -> String:
 func reset_players():
 	for p in players:
 		p.reset()  # Uses the reset() method from Player.gd
+		p.commentary.clear()
+		p.reaction_timer = 0.0
+		
+	rounds.clear()
+	turn_count = 0
 
 # 🧩 Series Simulation
 func simulate_series():
