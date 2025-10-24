@@ -23,3 +23,6 @@ var thrower_hit_streak: int = 0
 var target_dodge_streak: int = 0
 var target_catch_streak: int = 0
 var target_clutch_streak: int = 0
+
+# Adding Match time
+var match_time: float = 0.0  # Time in seconds when the round occurred

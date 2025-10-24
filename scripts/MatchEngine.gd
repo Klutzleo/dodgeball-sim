@@ -108,6 +108,7 @@ func simulate_reaction_queue(current_time: float) -> void:
 			round.turn = turn_count
 			round.thrower = p
 			round.target = target
+			round.match_time = current_time
 
 			var result = resolve_throw(p, target, rng)
 			round.outcome = result["outcome"]
