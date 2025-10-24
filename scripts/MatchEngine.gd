@@ -7,46 +7,6 @@ var rounds: Array = []
 var turn_count: int = 0
 var rng := RandomNumberGenerator.new()
 
-# 🧩 Simulate a Turn
-func simulate_turn() -> MatchRound:
-	turn_count += 1
-
-	var alive_players := players.filter(func(p): return p.alive)
-	if alive_players.size() < 2:
-		print("Not enough players to simulate a turn.")
-		return null
-
-	var thrower = alive_players[rng.randi_range(0, alive_players.size() - 1)]
-	var target_pool := alive_players.filter(func(p): return p != thrower)
-	var target = target_pool[rng.randi_range(0, target_pool.size() - 1)]
-
-	var round = MatchRound.new()
-	round.turn = turn_count
-	round.thrower = thrower
-	round.target = target
-
-	var result = resolve_throw(thrower, target, rng)
-	round.outcome = result["outcome"]
-	round.throw_power = result["throw_power"]
-	round.dodge_power = result["dodge_power"]
-	round.catch_power = result["catch_power"]
-	round.roll = result["roll"]
-
-	round.commentary = generate_commentary(round)
-
-	if round.outcome == "Caught":
-		var revived = revive_teammate(thrower)
-		round.revived_player = revived
-		round.ball_holder_after = revived if revived else target
-	else:
-		round.ball_holder_after = target
-
-	for p in players:
-		p.ball_held = p == round.ball_holder_after
-
-	rounds.append(round)
-	return round
-
 # 🧩 Opening Rush
 func simulate_opening_rush(players: Array) -> void:
 	var ball_grab_scores := []
@@ -132,6 +92,7 @@ func detect_clutch(round: MatchRound) -> bool:
 
 	return abs(roll - dodge_cutoff) <= 2 or abs(roll - catch_cutoff) <= 2 or abs(roll - total) <= 2
 
+# 🧩 Real-Time Reaction Queue
 func simulate_reaction_queue(current_time: float) -> void:
 	for p in players:
 		if not p.alive or not p.ball_held:
@@ -166,18 +127,54 @@ func simulate_reaction_queue(current_time: float) -> void:
 			for q in players:
 				q.ball_held = q == round.ball_holder_after
 
+			# Streak logic
+			if detect_clutch(round):
+				round.target.clutch_streak += 1
+			else:
+				round.target.clutch_streak = 0
+
+			for q in players:
+				if q != round.target and q != round.thrower:
+					q.hit_streak = 0
+					q.dodge_streak = 0
+					q.catch_streak = 0
+					q.clutch_streak = 0
+
+			match round.outcome:
+				"Hit":
+					round.thrower.hit_streak += 1
+					round.target.hit_streak = 0
+					round.target.dodge_streak = 0
+					round.target.catch_streak = 0
+				"Dodged":
+					round.target.dodge_streak += 1
+					round.thrower.hit_streak = 0
+				"Caught":
+					round.target.catch_streak += 1
+					round.thrower.hit_streak = 0
+
+			# Snapshot streaks
+			round.thrower_hit_streak = round.thrower.hit_streak
+			round.target_dodge_streak = round.target.dodge_streak
+			round.target_catch_streak = round.target.catch_streak
+			round.target_clutch_streak = round.target.clutch_streak
+
 			rounds.append(round)
-			print("⏱️ %s acted at %.2f seconds → %s" % [p.name, current_time, round.outcome])
+			print("⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome])
 			print("Commentary: %s" % round.commentary)
 
-			# Reset reaction timer for next action
+			# Reset reaction timer
 			var base_time = 6.0
 			var modifier = 0.5
 			p.reaction_timer = current_time + base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
 
-# 🧩 Full Match Simulation
-func simulate_match() -> String:
-	while true:
+# 🧩 Real-Time Match Loop
+func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
+	var current_time := 0.0
+
+	while current_time <= max_time:
+		simulate_reaction_queue(current_time)
+
 		var alive_teams := {}
 		for p in players:
 			if p.alive:
@@ -185,73 +182,25 @@ func simulate_match() -> String:
 
 		if alive_teams.size() < 2:
 			var winner = alive_teams.keys()[0]
-			print("Match over! Winning team: %s" % winner)
+			print("🏁 Match ends at %.2f seconds — %s wins!" % [current_time, winner])
 			return winner
 
-		var round = simulate_turn()
-		if round == null:
-			print("Simulation failed — no valid turn.")
-			break
+		current_time += step
 
-		print("Turn %d: %s throws at %s → %s" % [round.turn, round.thrower.name, round.target.name, round.outcome])
-		print("Commentary: %s" % round.commentary)
-		print("Stats — Throw: %d | Dodge: %d | Catch: %d | Roll: %d" %
-			[round.throw_power, round.dodge_power, round.catch_power, round.roll])
-		print("-----")
-
-		if detect_clutch(round):
-			print("🔥 Clutch play detected!")
-			round.target.clutch_streak += 1
-		else:
-			round.target.clutch_streak = 0
-
-		for p in players:
-			if p != round.target and p != round.thrower:
-				p.hit_streak = 0
-				p.dodge_streak = 0
-				p.catch_streak = 0
-				p.clutch_streak = 0
-
-		match round.outcome:
-			"Hit":
-				round.thrower.hit_streak += 1
-				round.target.hit_streak = 0
-				round.target.dodge_streak = 0
-				round.target.catch_streak = 0
-			"Dodged":
-				round.target.dodge_streak += 1
-				round.thrower.hit_streak = 0
-			"Caught":
-				round.target.catch_streak += 1
-				round.thrower.hit_streak = 0
-
-		round.thrower_hit_streak = round.thrower.hit_streak
-		round.target_dodge_streak = round.target.dodge_streak
-		round.target_catch_streak = round.target.catch_streak
-		round.target_clutch_streak = round.target.clutch_streak
-
-		if round.thrower.hit_streak >= 3:
-			print("🔥 %s is on a hit streak!" % round.thrower.name)
-		if round.target.dodge_streak >= 3:
-			print("🌀 %s is dodging everything!" % round.target.name)
-		if round.target.catch_streak >= 3:
-			print("🧤 %s is catching fire!" % round.target.name)
-		if round.target.clutch_streak >= 3:
-			print("💥 %s thrives under pressure!" % round.target.name)
-
-	return "Unknown"
+	print("⏱️ Time expired — match ends in a draw.")
+	return "Draw"
 
 # 🧩 Reset Players Between Matches
 func reset_players():
 	for p in players:
-		p.reset()  # Uses the reset() method from Player.gd
+		p.reset()
 		p.commentary.clear()
 		p.reaction_timer = 0.0
-		
+
 	rounds.clear()
 	turn_count = 0
 
-# 🧩 Series Simulation
+# 🧩 Series Simulation (Best of 3)
 func simulate_series():
 	var red_wins = 0
 	var blue_wins = 0
@@ -259,7 +208,7 @@ func simulate_series():
 
 	while red_wins < 2 and blue_wins < 2:
 		reset_players()
-		print("Match %d begins!" % match_number)
+		print("🎮 Match %d begins!" % match_number)
 		var winner = simulate_match()
 		if winner == "Red":
 			red_wins += 1
@@ -267,6 +216,4 @@ func simulate_series():
 			blue_wins += 1
 		else:
 			print("⚠️ Unexpected result: %s" % winner)
-		match_number += 1
-
-	print("🏆 Series over! %s wins the best-of-3!" % ("Red" if red_wins > blue_wins else "Blue"))
+	
