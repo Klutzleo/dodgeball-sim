@@ -169,6 +169,132 @@ func simulate_reaction_queue(current_time: float) -> void:
 			var modifier = 0.5
 			p.reaction_timer = current_time + base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
 
+func simulate_throw(p: Player, current_time: float) -> void:
+	var target_pool := players.filter(func(t): return t.alive and t.team != p.team)
+	if target_pool.size() == 0:
+		return
+
+	var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
+	var round := MatchRound.new()
+	round.turn = turn_count
+	round.thrower = p
+	round.target = target
+	round.match_time = current_time
+
+	var result = resolve_throw(p, target, rng)
+	round.outcome = result["outcome"]
+	round.throw_power = result["throw_power"]
+	round.dodge_power = result["dodge_power"]
+	round.catch_power = result["catch_power"]
+	round.roll = result["roll"]
+	round.commentary = generate_commentary(round)
+
+	if round.outcome == "Caught":
+		var revived = revive_teammate(p)
+		round.revived_player = revived
+		round.ball_holder_after = revived if revived else target
+	else:
+		round.ball_holder_after = target
+
+	for q in players:
+		q.ball_held = q == round.ball_holder_after
+
+	# Streak logic
+	if detect_clutch(round):
+		round.target.clutch_streak += 1
+	else:
+		round.target.clutch_streak = 0
+
+	for q in players:
+		if q != round.target and q != round.thrower:
+			q.hit_streak = 0
+			q.dodge_streak = 0
+			q.catch_streak = 0
+			q.clutch_streak = 0
+
+	match round.outcome:
+		"Hit":
+			round.thrower.hit_streak += 1
+			round.target.hit_streak = 0
+			round.target.dodge_streak = 0
+			round.target.catch_streak = 0
+		"Dodged":
+			round.target.dodge_streak += 1
+			round.thrower.hit_streak = 0
+		"Caught":
+			round.target.catch_streak += 1
+			round.thrower.hit_streak = 0
+
+	# Snapshot streaks
+	round.thrower_hit_streak = round.thrower.hit_streak
+	round.target_dodge_streak = round.target.dodge_streak
+	round.target_catch_streak = round.target.catch_streak
+	round.target_clutch_streak = round.target.clutch_streak
+
+	rounds.append(round)
+	print("🎯 %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome])
+	print("Commentary: %s" % round.commentary)
+
+func simulate_pass(p: Player, current_time: float) -> void:
+	var teammate_pool := players.filter(func(t): return t.alive and t.team == p.team and t != p)
+	if teammate_pool.size() == 0:
+		return  # No one to pass to
+
+	var receiver: Player = teammate_pool[rng.randi_range(0, teammate_pool.size() - 1)]
+
+	var round := MatchRound.new()
+	round.turn = turn_count
+	round.thrower = p
+	round.target = receiver
+	round.match_time = current_time
+	round.outcome = "Pass"
+	round.commentary = "%s passed the ball to %s." % [p.name, receiver.name]
+	round.ball_holder_after = receiver
+
+	for q in players:
+		q.ball_held = q == receiver
+
+	# Optional: reset receiver's reaction timer for immediate follow-up
+	var base_time = 6.0
+	var modifier = 0.5
+	receiver.reaction_timer = current_time + base_time - (receiver.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
+
+	rounds.append(round)
+	print("🤝 %.2f | %s passed to %s" % [current_time, p.name, receiver.name])
+	print("Commentary: %s" % round.commentary)
+
+func simulate_dodge(p: Player, current_time: float) -> void:
+	var round := MatchRound.new()
+	round.turn = turn_count
+	round.thrower = p
+	round.target = p  # Self-targeted action
+	round.match_time = current_time
+	round.outcome = "Dodge"
+	round.commentary = "%s juked and rolled — just in case." % p.name
+	round.ball_holder_after = p if p.ball_held else null
+
+	# Optional: add streak logic
+	p.dodge_streak += 1
+	round.target_dodge_streak = p.dodge_streak
+
+	rounds.append(round)
+	print("🌀 %.2f | %s dodged preemptively" % [current_time, p.name])
+	print("Commentary: %s" % round.commentary)
+
+func simulate_hold(p: Player, current_time: float) -> void:
+	var round := MatchRound.new()
+	round.turn = turn_count
+	round.thrower = p
+	round.target = p  # Self-targeted action
+	round.match_time = current_time
+	round.outcome = "Hold"
+	round.commentary = "%s held the ball, waiting for the perfect moment..." % p.name
+	round.ball_holder_after = p if p.ball_held else null
+
+	rounds.append(round)
+	print("⏳ %.2f | %s held the ball" % [current_time, p.name])
+	print("Commentary: %s" % round.commentary)
+
 # 🧩 Real-Time Match Loop
 func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
 	var current_time := 0.0
