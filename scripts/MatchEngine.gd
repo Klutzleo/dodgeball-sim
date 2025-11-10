@@ -295,6 +295,30 @@ func simulate_hold(p: Player, current_time: float) -> void:
 	print("⏳ %.2f | %s held the ball" % [current_time, p.name])
 	print("Commentary: %s" % round.commentary)
 
+func simulate_taunt(p: Player, current_time: float) -> void:
+	var taunts := [
+		"%s shouted, 'You call that a throw?'",
+		"%s winked and pointed at the other team.",
+		"%s spun the ball and grinned.",
+		"%s yelled, 'You're next!'",
+		"%s did a little dance. It was... unsettling."
+	]
+
+	var line = taunts[rng.randi_range(0, taunts.size() - 1)] % p.name
+
+	var round := MatchRound.new()
+	round.turn = turn_count
+	round.thrower = p
+	round.target = p
+	round.match_time = current_time
+	round.outcome = "Taunt"
+	round.commentary = line
+	round.ball_holder_after = p if p.ball_held else null
+
+	rounds.append(round)
+	print("💬 %.2f | %s taunted" % [current_time, p.name])
+	print("Commentary: %s" % round.commentary)
+
 # 🧩 Real-Time Match Loop
 func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
 	var current_time := 0.0
