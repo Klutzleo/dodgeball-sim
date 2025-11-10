@@ -500,12 +500,12 @@ func reset_players():
 	rounds.clear()
 	turn_count = 0
 
-# 🧩 Series Simulation (Best of 3)
 func simulate_series():
 	var red_wins = 0
 	var blue_wins = 0
 	var match_number = 1
 	var series_stats := {}
+	var series_log := []
 
 	while red_wins < 2 and blue_wins < 2:
 		reset_players()
@@ -523,6 +523,18 @@ func simulate_series():
 				for key in match_summary[name].keys():
 					series_stats[name][key] += match_summary[name][key]
 
+		# 🏆 Match MVP
+		var match_mvp = detect_mvp(match_summary)
+		print("🏅 Match %d MVP: %s with %d impact" % [match_number, match_mvp["name"], match_mvp["score"]])
+
+		# 🗂️ Log this match
+		series_log.append({
+			"match": match_number,
+			"winner": winner,
+			"mvp": match_mvp["name"],
+			"impact": match_mvp["score"]
+		})
+
 		if winner == "Red":
 			red_wins += 1
 		elif winner == "Blue":
@@ -533,6 +545,10 @@ func simulate_series():
 		match_number += 1
 
 	# 🏆 Series MVP
-	var mvp = detect_mvp(series_stats)
-	print("\n🏆 SERIES MVP: %s with %d impact" % [mvp["name"], mvp["score"]])
-	
+	var series_mvp = detect_mvp(series_stats)
+	print("\n🏆 SERIES MVP: %s with %d impact" % [series_mvp["name"], series_mvp["score"]])
+
+	# 📊 Series Log Recap
+	print("\n📘 SERIES LOG")
+	for entry in series_log:
+		print("Match %d → Winner: %s | MVP: %s (%d impact)" % [entry["match"], entry["winner"], entry["mvp"], entry["impact"]])
