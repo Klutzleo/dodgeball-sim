@@ -92,6 +92,74 @@ func detect_clutch(round: MatchRound) -> bool:
 
 	return abs(roll - dodge_cutoff) <= 2 or abs(roll - catch_cutoff) <= 2 or abs(roll - total) <= 2
 
+func choose_action(player: Player) -> String:
+	var options := []
+	var weights := {}
+
+	var has_ball = player.ball_held
+	var teammates_alive = players.filter(func(p): return p.alive and p.team == player.team and p != player).size()
+	var enemies_alive = players.filter(func(p): return p.alive and p.team != player.team).size()
+
+	# 🔥 Hothead: favors throw
+	if player.archetype == "Hothead":
+		if has_ball:
+			options = ["throw", "taunt", "hold"]
+			weights = { "throw": 5, "taunt": 2, "hold": 1 }
+		else:
+			options = ["taunt", "dodge"]
+			weights = { "taunt": 3, "dodge": 2 }
+
+	# 🧠 Strategist: favors pass and hold
+	elif player.archetype == "Strategist":
+		if has_ball:
+			options = ["pass", "hold", "throw"]
+			weights = { "pass": 4, "hold": 3, "throw": 2 }
+		else:
+			options = ["dodge", "hold"]
+			weights = { "dodge": 3, "hold": 2 }
+
+	# 👻 Ghost: favors dodge and taunt
+	elif player.archetype == "Ghost":
+		if has_ball:
+			options = ["throw", "taunt", "hold"]
+			weights = { "throw": 3, "taunt": 3, "hold": 1 }
+		else:
+			options = ["dodge", "taunt"]
+			weights = { "dodge": 5, "taunt": 2 }
+
+	# 🧱 Default: balanced chaos
+	else:
+		if has_ball:
+			options = ["throw", "pass", "hold", "taunt"]
+			weights = { "throw": 3, "pass": 2, "hold": 2, "taunt": 1 }
+		else:
+			options = ["dodge", "taunt", "hold"]
+			weights = { "dodge": 3, "taunt": 2, "hold": 1 }
+
+	# 🧠 Streak modifiers
+	if player.hit_streak >= 2:
+		weights["throw"] = weights.get("throw", 1) + 2
+	if player.catch_streak >= 2:
+		weights["pass"] = weights.get("pass", 1) + 2
+	if player.clutch_streak >= 2:
+		weights["hold"] = weights.get("hold", 1) + 2
+	if player.dodge_streak >= 2:
+		weights["dodge"] = weights.get("dodge", 1) + 2
+
+	# 🎲 Weighted roll
+	var total_weight = 0
+	for action in options:
+		total_weight += weights.get(action, 1)
+
+	var roll = rng.randi_range(0, total_weight - 1)
+	var cumulative = 0
+	for action in options:
+		cumulative += weights.get(action, 1)
+		if roll < cumulative:
+			return action
+
+	return options[0]  # fallback
+
 # 🧩 Real-Time Reaction Queue
 func simulate_reaction_queue(current_time: float) -> void:
 	for p in players:
@@ -340,6 +408,54 @@ func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
 
 	print("⏱️ Time expired — match ends in a draw.")
 	return "Draw"
+
+func generate_match_summary(rounds: Array) -> Dictionary:
+	var stats := {}
+	for p in players:
+		stats[p.name] = {
+			"hits": 0,
+			"catches": 0,
+			"dodges": 0,
+			"passes": 0,
+			"holds": 0,
+			"taunts": 0,
+			"clutch": 0,
+			"revives": 0,
+			"hit_streak": 0,
+			"catch_streak": 0,
+			"dodge_streak": 0,
+			"clutch_streak": 0
+		}
+
+	for round in rounds:
+		var name = round.thrower.name
+		match round.outcome:
+			"Hit":
+				stats[name]["hits"] += 1
+			"Caught":
+				stats[round.target.name]["catches"] += 1
+			"Dodged":
+				stats[round.target.name]["dodge_streak"] += 1
+				stats[round.target.name]["dodges"] += 1
+			"Pass":
+				stats[name]["passes"] += 1
+			"Hold":
+				stats[name]["holds"] += 1
+			"Taunt":
+				stats[name]["taunts"] += 1
+			"Dodge":
+				stats[name]["dodges"] += 1
+			"Revive":
+				if round.revived_player:
+					stats[name]["revives"] += 1
+
+		# Streak snapshots
+		stats[name]["hit_streak"] = max(stats[name]["hit_streak"], round.thrower_hit_streak)
+		stats[round.target.name]["catch_streak"] = max(stats[round.target.name]["catch_streak"], round.target_catch_streak)
+		stats[round.target.name]["dodge_streak"] = max(stats[round.target.name]["dodge_streak"], round.target_dodge_streak)
+		stats[round.target.name]["clutch_streak"] = max(stats[round.target.name]["clutch_streak"], round.target_clutch_streak)
+
+	return stats
 
 # 🧩 Reset Players Between Matches
 func reset_players():
