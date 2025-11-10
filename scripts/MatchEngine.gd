@@ -552,3 +552,34 @@ func simulate_series():
 	print("\n📘 SERIES LOG")
 	for entry in series_log:
 		print("Match %d → Winner: %s | MVP: %s (%d impact)" % [entry["match"], entry["winner"], entry["mvp"], entry["impact"]])
+
+func generate_series_report(series_log: Array) -> Dictionary:
+	var report := {
+		"matches": [],
+		"red_wins": 0,
+		"blue_wins": 0,
+		"draws": 0,
+		"mvp_tally": {}
+	}
+
+	for entry in series_log:
+		report["matches"].append({
+			"match": entry["match"],
+			"winner": entry["winner"],
+			"mvp": entry["mvp"],
+			"impact": entry["impact"]
+		})
+
+		if entry["winner"] == "Red":
+			report["red_wins"] += 1
+		elif entry["winner"] == "Blue":
+			report["blue_wins"] += 1
+		else:
+			report["draws"] += 1
+
+		if not report["mvp_tally"].has(entry["mvp"]):
+			report["mvp_tally"][entry["mvp"]] = 1
+		else:
+			report["mvp_tally"][entry["mvp"]] += 1
+
+	return report
