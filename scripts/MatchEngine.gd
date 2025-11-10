@@ -505,15 +505,34 @@ func simulate_series():
 	var red_wins = 0
 	var blue_wins = 0
 	var match_number = 1
+	var series_stats := {}
 
 	while red_wins < 2 and blue_wins < 2:
 		reset_players()
 		print("🎮 Match %d begins!" % match_number)
 		var winner = simulate_match()
+
+		var match_summary = generate_match_summary(rounds)
+		print_match_summary(match_summary)
+
+		# 🧠 Accumulate into series_stats
+		for name in match_summary.keys():
+			if not series_stats.has(name):
+				series_stats[name] = match_summary[name].duplicate()
+			else:
+				for key in match_summary[name].keys():
+					series_stats[name][key] += match_summary[name][key]
+
 		if winner == "Red":
 			red_wins += 1
 		elif winner == "Blue":
 			blue_wins += 1
 		else:
 			print("⚠️ Unexpected result: %s" % winner)
+
+		match_number += 1
+
+	# 🏆 Series MVP
+	var mvp = detect_mvp(series_stats)
+	print("\n🏆 SERIES MVP: %s with %d impact" % [mvp["name"], mvp["score"]])
 	
