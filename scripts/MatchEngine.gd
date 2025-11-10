@@ -457,6 +457,18 @@ func generate_match_summary(rounds: Array) -> Dictionary:
 
 	return stats
 
+func print_match_summary(summary: Dictionary) -> void:
+	print("\n📊 MATCH SUMMARY")
+	print("────────────────────────────")
+
+	for name in summary.keys():
+		var s = summary[name]
+		print("👤 %s" % name)
+		print("   🎯 Hits: %d | 🧤 Catches: %d | 🌀 Dodges: %d" % [s["hits"], s["catches"], s["dodges"]])
+		print("   🤝 Passes: %d | ⏳ Holds: %d | 💬 Taunts: %d" % [s["passes"], s["holds"], s["taunts"]])
+		print("   🔁 Revives: %d | 🔥 Hit Streak: %d | 🧠 Clutch Streak: %d" % [s["revives"], s["hit_streak"], s["clutch_streak"]])
+		print("────────────────────────────")
+
 # 🧩 Reset Players Between Matches
 func reset_players():
 	for p in players:
