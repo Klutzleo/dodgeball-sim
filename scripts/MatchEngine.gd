@@ -583,3 +583,22 @@ func generate_series_report(series_log: Array) -> Dictionary:
 			report["mvp_tally"][entry["mvp"]] += 1
 
 	return report
+
+func save_report_to_json(report: Dictionary) -> String:
+	var json := JSON.new()
+	var result = json.stringify(report, "\t")  # Pretty-print with tabs
+	return result
+
+func load_report_from_json(path: String) -> Dictionary:
+	var file = FileAccess.open(path, FileAccess.READ)
+	if file:
+		var content = file.get_as_text()
+		var json = JSON.new()
+		var result = json.parse(content)
+		if result.error == OK:
+			return result.result
+		else:
+			print("❌ JSON parse error: %s" % result.error_string)
+	else:
+		print("❌ Failed to open file: %s" % path)
+	return {}
