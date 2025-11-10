@@ -469,6 +469,27 @@ func print_match_summary(summary: Dictionary) -> void:
 		print("   🔁 Revives: %d | 🔥 Hit Streak: %d | 🧠 Clutch Streak: %d" % [s["revives"], s["hit_streak"], s["clutch_streak"]])
 		print("────────────────────────────")
 
+func calculate_impact_score(stats: Dictionary) -> int:
+	return (
+		stats["hits"] * 5 +
+		stats["catches"] * 4 +
+		stats["dodges"] * 3 +
+		stats["passes"] * 2 +
+		stats["holds"] * 1 +
+		stats["taunts"] * 1 +
+		stats["revives"] * 4 +
+		stats["hit_streak"] * 2 +
+		stats["clutch_streak"] * 3
+	)
+
+func detect_mvp(summary: Dictionary) -> Dictionary:
+	var best := { "name": "", "score": -1 }
+	for name in summary.keys():
+		var score = calculate_impact_score(summary[name])
+		if score > best["score"]:
+			best = { "name": name, "score": score }
+	return best
+
 # 🧩 Reset Players Between Matches
 func reset_players():
 	for p in players:
