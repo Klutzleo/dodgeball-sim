@@ -1,0 +1,23 @@
+# Copilot Instructions
+
+- **Engine & entrypoint**: Godot (standard). Open the repo in Godot and run `Main.tscn` to play the prototype. No custom build scripts or tests; rely on Godot output and printed logs for feedback.
+- **Match engine locus**: `scripts/MatchEngine.gd` owns `players` (Player nodes), `rounds` (MatchRound resources), and time-driven loops. `simulate_match(max_time, step)` advances time, calls `simulate_reaction_queue`, and stops when one team remains or time expires.
+- **Stats contract**: `scripts/Player.gd` fixes stat keys: throw = `accuracy + ferocity`, dodge = `instinct + hustle`, catch = `hands + backbone`. Keep any new mechanics aligned with these pairs and thread changes through `resolve_throw`, `choose_action`, and summary math.
+- **Opening rush (6 balls, 6 grabs)**: `simulate_opening_rush` ranks by `hustle + ferocity + rng`, gives the top 6 a ball, and seeds `reaction_timer` (base 6.0 − instinct*0.5 + rng). If you change starter counts or ball counts, adjust this loop and any UI assumptions.
+- **Reaction timing vs turns**: Actions fire when `reaction_timer` elapses, not turn order. Multiple throws can occur the same tick; players can throw even while targeted. Preserve the timer reset pattern (base 6.0 − instinct*0.5 + rng) after each action.
+- **Action menu & archetypes**: `choose_action` weights by archetype (`Hothead`, `Strategist`, `Ghost`, default) plus streak boosts. New actions must be added to weights, implemented in simulators, logged into `rounds`, and counted in summaries/MVP scoring.
+- **Action simulators**: `simulate_throw`, `simulate_pass`, `simulate_dodge`, `simulate_hold`, `simulate_taunt`, and real-time `simulate_reaction_queue` create `MatchRound` entries, swap `ball_holder_after`, and manage streak resets so only thrower/target keep streak progress for their outcome.
+- **Resolution math**: `resolve_throw` rolls one `rng` vs throw/dodge/catch totals. Dodge ≥ roll → `Dodged`; dodge+catch > roll → `Caught`; else `Hit` (target eliminated). Ball shield rule (design): holding a ball grants +1 dodge; thread that bonus consistently if/when implemented.
+- **Balls & possession (design hooks)**: Six balls in 6v6; start midcourt. Players can hold up to 2 (one per hand); passing is the planned way to feed cannons. Overthrows/drops should create loose balls; retrieval phases may have safe/contested/exposed zones. Document any defensive bonuses from dual-wielding.
+- **Commentary**: `generate_commentary` templates are keyed by `"{outcome}_{target.archetype}"` with defaults. Add archetypes or outcomes by extending this map; keep emoji/tone consistent with current strings.
+- **Revives**: On `Caught`, `revive_teammate` returns the first eliminated teammate and hands them the ball. Keep ordering stable or clearly document priority if it changes.
+- **Streaks & clutch**: Streak counters live on `Player`. `detect_clutch` fires when roll is within ±2 of dodge/catch/total cutoffs. Snapshots are stored on `MatchRound` for summaries. If you add new outcomes, update streak and clutch logic so summaries stay accurate.
+- **Summaries & MVP**: `generate_match_summary`/`print_match_summary` tally per-player counts and streak peaks. `calculate_impact_score` weights hits (5), catches (4), dodges (3), passes/holds/taunts (1–2), revives (4), streaks (2–3). Update weights if you add mechanics like ball shields or dual-wield bonuses.
+- **Series flow**: `simulate_series` is best-of-three; uses `reset_players` between matches, logs `series_log`, and prints match/series MVPs. Changing series length means updating win thresholds and log expectations.
+- **Campaigns**: `CampaignManager.gd` rolls up `series_log` and `series_report`; `add_series_to_campaign` bumps fame (+5) and `total_mvp` for MVP. Keep `player_profiles` keys aligned with match/series summary fields.
+- **Persistence**: `MatchEngine.save_report_to_json`/`load_report_from_json` pretty-print with tabs and use Godot `FileAccess` paths. Extend report shape cautiously and keep loader tolerant.
+- **State resets**: Use `reset_players` before new matches/series to clear streaks, commentary, ball state, and timers; `rounds.clear()` and `turn_count` reset there—avoid duplicate reset code.
+- **Assets & scenes**: Gameplay is script-driven; art/audio live under `assets/`. Scenes under `scenes/`; `Main.tscn` is the launch scene.
+- **Style**: Concise GDScript, ASCII by default, light comments only when non-obvious. Keep emojis consistent with existing logs/commentary.
+
+If anything here seems off or you need more detail on a system (ball shield bonus, dual-ball defense, contested pickups), call it out before changing core math.
