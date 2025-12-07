@@ -12,6 +12,9 @@ func simulate_opening_rush(players: Array) -> void:
 	var ball_grab_scores := []
 
 	for p in players:
+		p.drop_all_balls()
+
+	for p in players:
 		var score = p.stats["hustle"] + p.stats["ferocity"] + rng.randi_range(0, 5)
 		ball_grab_scores.append({ "player": p, "score": score })
 
@@ -19,7 +22,7 @@ func simulate_opening_rush(players: Array) -> void:
 
 	for i in range(6):
 		var p = ball_grab_scores[i]["player"]
-		p.ball_held = true
+		p.give_ball(1)
 		p.commentary.append("🏃‍♂️ Grabbed a ball in the opening rush!")
 		var base_time = 6.0
 		var modifier = 0.5
@@ -34,6 +37,8 @@ func simulate_opening_rush(players: Array) -> void:
 func resolve_throw(thrower: Player, target: Player, rng: RandomNumberGenerator) -> Dictionary:
 	var throw_power = thrower.stats["accuracy"] + thrower.stats["ferocity"]
 	var dodge_power = target.stats["instinct"] + target.stats["hustle"]
+	var dodge_bonus = 1 if target.ball_count > 0 else 0  # Ball shield bonus
+	dodge_power += dodge_bonus
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
 	var total = throw_power + dodge_power + catch_power
 	var roll = rng.randi_range(0, total - 1)
@@ -52,7 +57,8 @@ func resolve_throw(thrower: Player, target: Player, rng: RandomNumberGenerator) 
 		"throw_power": throw_power,
 		"dodge_power": dodge_power,
 		"catch_power": catch_power,
-		"roll": roll
+		"roll": roll,
+		"dodge_bonus": dodge_bonus
 	}
 
 # 🧩 Revival Logic
@@ -96,7 +102,7 @@ func choose_action(player: Player) -> String:
 	var options := []
 	var weights := {}
 
-	var has_ball = player.ball_held
+	var has_ball = player.ball_count > 0
 	var teammates_alive = players.filter(func(p): return p.alive and p.team == player.team and p != player).size()
 	var enemies_alive = players.filter(func(p): return p.alive and p.team != player.team).size()
 
@@ -163,7 +169,7 @@ func choose_action(player: Player) -> String:
 # 🧩 Real-Time Reaction Queue
 func simulate_reaction_queue(current_time: float) -> void:
 	for p in players:
-		if not p.alive or not p.ball_held:
+		if not p.alive or p.ball_count == 0:
 			continue
 
 		if p.reaction_timer <= current_time:
@@ -177,6 +183,7 @@ func simulate_reaction_queue(current_time: float) -> void:
 			round.thrower = p
 			round.target = target
 			round.match_time = current_time
+			p.take_ball(1)  # Spend one ball on this throw
 
 			var result = resolve_throw(p, target, rng)
 			round.outcome = result["outcome"]
@@ -184,17 +191,18 @@ func simulate_reaction_queue(current_time: float) -> void:
 			round.dodge_power = result["dodge_power"]
 			round.catch_power = result["catch_power"]
 			round.roll = result["roll"]
+			round.dodge_bonus = result.get("dodge_bonus", 0)
 			round.commentary = generate_commentary(round)
 
 			if round.outcome == "Caught":
 				var revived = revive_teammate(p)
 				round.revived_player = revived
 				round.ball_holder_after = revived if revived else target
+				if revived == null:
+					target.give_ball(1)
 			else:
 				round.ball_holder_after = target
-
-			for q in players:
-				q.ball_held = q == round.ball_holder_after
+				target.give_ball(1)
 
 			# Streak logic
 			if detect_clutch(round):
@@ -241,6 +249,8 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	var target_pool := players.filter(func(t): return t.alive and t.team != p.team)
 	if target_pool.size() == 0:
 		return
+	if p.ball_count == 0:
+		return
 
 	var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
 	var round := MatchRound.new()
@@ -248,6 +258,7 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	round.thrower = p
 	round.target = target
 	round.match_time = current_time
+	p.take_ball(1)
 
 	var result = resolve_throw(p, target, rng)
 	round.outcome = result["outcome"]
@@ -255,17 +266,18 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	round.dodge_power = result["dodge_power"]
 	round.catch_power = result["catch_power"]
 	round.roll = result["roll"]
+	round.dodge_bonus = result.get("dodge_bonus", 0)
 	round.commentary = generate_commentary(round)
 
 	if round.outcome == "Caught":
 		var revived = revive_teammate(p)
 		round.revived_player = revived
 		round.ball_holder_after = revived if revived else target
+		if revived == null:
+			target.give_ball(1)
 	else:
 		round.ball_holder_after = target
-
-	for q in players:
-		q.ball_held = q == round.ball_holder_after
+		target.give_ball(1)
 
 	# Streak logic
 	if detect_clutch(round):
@@ -307,6 +319,8 @@ func simulate_pass(p: Player, current_time: float) -> void:
 	var teammate_pool := players.filter(func(t): return t.alive and t.team == p.team and t != p)
 	if teammate_pool.size() == 0:
 		return  # No one to pass to
+	if p.ball_count == 0:
+		return  # Nothing to pass
 
 	var receiver: Player = teammate_pool[rng.randi_range(0, teammate_pool.size() - 1)]
 
@@ -318,9 +332,8 @@ func simulate_pass(p: Player, current_time: float) -> void:
 	round.outcome = "Pass"
 	round.commentary = "%s passed the ball to %s." % [p.name, receiver.name]
 	round.ball_holder_after = receiver
-
-	for q in players:
-		q.ball_held = q == receiver
+	p.take_ball(1)
+	receiver.give_ball(1)
 
 	# Optional: reset receiver's reaction timer for immediate follow-up
 	var base_time = 6.0
@@ -339,7 +352,7 @@ func simulate_dodge(p: Player, current_time: float) -> void:
 	round.match_time = current_time
 	round.outcome = "Dodge"
 	round.commentary = "%s juked and rolled — just in case." % p.name
-	round.ball_holder_after = p if p.ball_held else null
+	round.ball_holder_after = p if p.ball_count > 0 else null
 
 	# Optional: add streak logic
 	p.dodge_streak += 1
@@ -357,7 +370,7 @@ func simulate_hold(p: Player, current_time: float) -> void:
 	round.match_time = current_time
 	round.outcome = "Hold"
 	round.commentary = "%s held the ball, waiting for the perfect moment..." % p.name
-	round.ball_holder_after = p if p.ball_held else null
+	round.ball_holder_after = p if p.ball_count > 0 else null
 
 	rounds.append(round)
 	print("⏳ %.2f | %s held the ball" % [current_time, p.name])
@@ -381,7 +394,7 @@ func simulate_taunt(p: Player, current_time: float) -> void:
 	round.match_time = current_time
 	round.outcome = "Taunt"
 	round.commentary = line
-	round.ball_holder_after = p if p.ball_held else null
+	round.ball_holder_after = p if p.ball_count > 0 else null
 
 	rounds.append(round)
 	print("💬 %.2f | %s taunted" % [current_time, p.name])
@@ -424,7 +437,8 @@ func generate_match_summary(rounds: Array) -> Dictionary:
 			"hit_streak": 0,
 			"catch_streak": 0,
 			"dodge_streak": 0,
-			"clutch_streak": 0
+			"clutch_streak": 0,
+			"ball_control": 0
 		}
 
 	for round in rounds:
@@ -455,6 +469,10 @@ func generate_match_summary(rounds: Array) -> Dictionary:
 		stats[round.target.name]["dodge_streak"] = max(stats[round.target.name]["dodge_streak"], round.target_dodge_streak)
 		stats[round.target.name]["clutch_streak"] = max(stats[round.target.name]["clutch_streak"], round.target_clutch_streak)
 
+	# Peak possession (dual-ball awareness)
+	for p in players:
+		stats[p.name]["ball_control"] = max(stats[p.name]["ball_control"], p.max_ball_count)
+
 	return stats
 
 func print_match_summary(summary: Dictionary) -> void:
@@ -467,6 +485,7 @@ func print_match_summary(summary: Dictionary) -> void:
 		print("   🎯 Hits: %d | 🧤 Catches: %d | 🌀 Dodges: %d" % [s["hits"], s["catches"], s["dodges"]])
 		print("   🤝 Passes: %d | ⏳ Holds: %d | 💬 Taunts: %d" % [s["passes"], s["holds"], s["taunts"]])
 		print("   🔁 Revives: %d | 🔥 Hit Streak: %d | 🧠 Clutch Streak: %d" % [s["revives"], s["hit_streak"], s["clutch_streak"]])
+		print("   🏐 Max Balls Held: %d" % s["ball_control"])
 		print("────────────────────────────")
 
 func calculate_impact_score(stats: Dictionary) -> int:
@@ -479,7 +498,8 @@ func calculate_impact_score(stats: Dictionary) -> int:
 		stats["taunts"] * 1 +
 		stats["revives"] * 4 +
 		stats["hit_streak"] * 2 +
-		stats["clutch_streak"] * 3
+		stats["clutch_streak"] * 3 +
+		stats.get("ball_control", 0) * 1
 	)
 
 func detect_mvp(summary: Dictionary) -> Dictionary:
@@ -602,3 +622,27 @@ func load_report_from_json(path: String) -> Dictionary:
 	else:
 		print("❌ Failed to open file: %s" % path)
 	return {}
+
+# 🏃 Ball pickups (hooks for safe/contested/exposed zones)
+func attempt_ball_pickup(player: Player, zone: String) -> bool:
+	if player.ball_count >= player.max_balls:
+		return false
+
+	match zone:
+		"safe":
+			player.give_ball(1)
+			return true
+		"contested":
+			var roll = player.stats["instinct"] + rng.randi_range(0, 5)
+			if roll >= 4:
+				player.give_ball(1)
+				return true
+			return false
+		"exposed":
+			var roll_exposed = player.stats["instinct"] + player.stats["hustle"] + rng.randi_range(0, 7)
+			if roll_exposed >= 8:
+				player.give_ball(1)
+				return true
+			return false
+		_:
+			return false

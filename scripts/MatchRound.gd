@@ -14,6 +14,7 @@ var throw_power: int = 0
 var dodge_power: int = 0
 var catch_power: int = 0
 var roll: int = 0
+var dodge_bonus: int = 0
 
 # Clutch detection
 var was_clutch: bool = false
