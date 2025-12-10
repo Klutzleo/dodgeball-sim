@@ -1,23 +1,99 @@
 # Copilot Instructions
 
-- **Engine & entrypoint**: Godot (standard). Open the repo in Godot and run `Main.tscn` to play the prototype. No custom build scripts or tests; rely on Godot output and printed logs for feedback.
-- **Match engine locus**: `scripts/MatchEngine.gd` owns `players` (Player nodes), `rounds` (MatchRound resources), and time-driven loops. `simulate_match(max_time, step)` advances time, calls `simulate_reaction_queue`, and stops when one team remains or time expires.
-- **Stats contract**: `scripts/Player.gd` fixes stat keys: throw = `accuracy + ferocity`, dodge = `instinct + hustle`, catch = `hands + backbone`. Keep any new mechanics aligned with these pairs and thread changes through `resolve_throw`, `choose_action`, and summary math.
-- **Opening rush (6 balls, 6 grabs)**: `simulate_opening_rush` ranks by `hustle + ferocity + rng`, gives the top 6 a ball, and seeds `reaction_timer` (base 6.0 − instinct*0.5 + rng). If you change starter counts or ball counts, adjust this loop and any UI assumptions.
-- **Reaction timing vs turns**: Actions fire when `reaction_timer` elapses, not turn order. Multiple throws can occur the same tick; players can throw even while targeted. Preserve the timer reset pattern (base 6.0 − instinct*0.5 + rng) after each action.
-- **Action menu & archetypes**: `choose_action` weights by archetype (`Hothead`, `Strategist`, `Ghost`, default) plus streak boosts. New actions must be added to weights, implemented in simulators, logged into `rounds`, and counted in summaries/MVP scoring.
-- **Action simulators**: `simulate_throw`, `simulate_pass`, `simulate_dodge`, `simulate_hold`, `simulate_taunt`, and real-time `simulate_reaction_queue` create `MatchRound` entries, swap `ball_holder_after`, and manage streak resets so only thrower/target keep streak progress for their outcome.
-- **Resolution math**: `resolve_throw` rolls one `rng` vs throw/dodge/catch totals. Dodge ≥ roll → `Dodged`; dodge+catch > roll → `Caught`; else `Hit` (target eliminated). Ball shield rule (design): holding a ball grants +1 dodge; thread that bonus consistently if/when implemented.
-- **Balls & possession (design hooks)**: Six balls in 6v6; start midcourt. Players can hold up to 2 (one per hand); passing is the planned way to feed cannons. Overthrows/drops should create loose balls; retrieval phases may have safe/contested/exposed zones. Document any defensive bonuses from dual-wielding.
-- **Commentary**: `generate_commentary` templates are keyed by `"{outcome}_{target.archetype}"` with defaults. Add archetypes or outcomes by extending this map; keep emoji/tone consistent with current strings.
-- **Revives**: On `Caught`, `revive_teammate` returns the first eliminated teammate and hands them the ball. Keep ordering stable or clearly document priority if it changes.
-- **Streaks & clutch**: Streak counters live on `Player`. `detect_clutch` fires when roll is within ±2 of dodge/catch/total cutoffs. Snapshots are stored on `MatchRound` for summaries. If you add new outcomes, update streak and clutch logic so summaries stay accurate.
-- **Summaries & MVP**: `generate_match_summary`/`print_match_summary` tally per-player counts and streak peaks. `calculate_impact_score` weights hits (5), catches (4), dodges (3), passes/holds/taunts (1–2), revives (4), streaks (2–3). Update weights if you add mechanics like ball shields or dual-wield bonuses.
-- **Series flow**: `simulate_series` is best-of-three; uses `reset_players` between matches, logs `series_log`, and prints match/series MVPs. Changing series length means updating win thresholds and log expectations.
-- **Campaigns**: `CampaignManager.gd` rolls up `series_log` and `series_report`; `add_series_to_campaign` bumps fame (+5) and `total_mvp` for MVP. Keep `player_profiles` keys aligned with match/series summary fields.
-- **Persistence**: `MatchEngine.save_report_to_json`/`load_report_from_json` pretty-print with tabs and use Godot `FileAccess` paths. Extend report shape cautiously and keep loader tolerant.
-- **State resets**: Use `reset_players` before new matches/series to clear streaks, commentary, ball state, and timers; `rounds.clear()` and `turn_count` reset there—avoid duplicate reset code.
-- **Assets & scenes**: Gameplay is script-driven; art/audio live under `assets/`. Scenes under `scenes/`; `Main.tscn` is the launch scene.
-- **Style**: Concise GDScript, ASCII by default, light comments only when non-obvious. Keep emojis consistent with existing logs/commentary.
+## Project Overview
+Godot-based **multiplayer** dodgeball sim featuring real-time action resolution, archetype-driven AI, and narrative match recaps. Core loop: 6v6 teams, 6 balls, reaction timers drive throws/catches/dodges until one team eliminated or time expires. Designed for cross-platform play (desktop, web, mobile).
 
-If anything here seems off or you need more detail on a system (ball shield bonus, dual-ball defense, contested pickups), call it out before changing core math.
+## Dev Workflow
+- **Run/debug**: Open project in Godot 4.5, run `Main.tscn`. No build scripts or test framework; validate via Godot console output and printed logs.
+- **Feedback loop**: All gameplay outputs to console with emoji-prefixed timestamps (`⏱️`, `🎯`, `🤝`, etc.). Check terminal for action flow, commentary, and summaries.
+- **No external deps**: Pure GDScript, no plugins. Aseprite for sprites (future), but prototype is code-driven.
+- **Multiplayer target**: Game is being built for online multiplayer from the ground up. Current sim engine provides the foundation for networked gameplay via Firebase/Supabase sync.
+
+## Architecture
+**Core loop**: `MatchEngine.gd` orchestrates everything:
+- `simulate_match(max_time, step)`: Time-stepped loop advancing by `step` seconds, calling `simulate_reaction_queue` each tick until win condition or timeout.
+- `simulate_reaction_queue(current_time)`: Checks each alive player with balls; fires actions when `reaction_timer <= current_time`.
+- **Not turn-based**: Multiple actions can fire same tick; players can throw while targeted. Timer resets to `current_time + base_time - (instinct * modifier) + rng` after each action.
+- **Multiplayer design**: Current sim serves as deterministic backend. Player actions will eventually replace AI `choose_action` calls; `MatchRound` logs provide authoritative state for sync.
+
+**Data flow**: `MatchEngine` → `Player` nodes → `MatchRound` resources → summaries → `CampaignManager`:
+1. Match runs, creates `MatchRound` entries logged into `rounds[]`
+2. `generate_match_summary(rounds)` tallies per-player stats
+3. `detect_mvp(summary)` calculates impact scores
+4. `simulate_series()` runs best-of-3, accumulates series stats, logs MVPs
+5. `CampaignManager.add_series_to_campaign()` aggregates player profiles, fame, MVP counts
+6. **Network layer (planned)**: Firebase/Supabase will sync `MatchRound` events, player states, and match results across clients
+
+## Critical Systems
+
+### Stats Contract (Non-Negotiable)
+`Player.gd` defines six stats in three pairs:
+- **Throw** = `accuracy + ferocity`
+- **Dodge** = `instinct + hustle`
+- **Catch** = `hands + backbone`
+
+All new mechanics MUST align with these pairs. Thread changes through: `resolve_throw`, `choose_action`, `generate_match_summary`, `calculate_impact_score`.
+
+### Resolution Math (Single-Roll System)
+`resolve_throw` rolls once against combined total:
+```gdscript
+var total = throw_power + dodge_power + catch_power
+var roll = rng.randi_range(0, total - 1)
+if roll < dodge_power: → "Dodged"
+elif roll < dodge_power + catch_power: → "Caught"
+else: → "Hit" (eliminate target)
+```
+**Ball shield bonus**: Holding ball grants +1 dodge (already implemented in `resolve_throw`). Keep consistent if adding dual-ball bonuses.
+
+### Opening Rush
+`simulate_opening_rush` ranks players by `hustle + ferocity + rng`, top 6 grab balls, seeds initial `reaction_timer`. Changing ball/player counts? Update this + UI assumptions.
+
+### Archetypes Drive Actions
+`choose_action` weights options by archetype + streaks:
+- **Hothead**: Favors throw (5), taunt (2), hold (1)
+- **Strategist**: Favors pass (4), hold (3), throw (2)
+- **Ghost**: Favors dodge (5), taunt (2)
+- **Default**: Balanced chaos
+
+**Adding new actions**: Must implement simulator (`simulate_X`), log into `MatchRound`, count in `generate_match_summary`, weight in `calculate_impact_score`.
+
+### Streak System
+Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_streak`) live on `Player`:
+- **Clutch detection**: Roll within ±2 of dodge/catch/total cutoffs triggers `clutch_streak++`
+- **Reset logic**: Only thrower/target keep streak progress for their outcome; all other players' streaks reset to 0
+- **Snapshot**: Streak values stored on `MatchRound` for summaries
+
+### MVP Scoring
+`calculate_impact_score` weights:
+- Hits: 5 | Catches: 4 | Dodges: 3 | Passes: 2 | Revives: 4
+- Holds/Taunts: 1 | Hit streak: 2 | Clutch streak: 3 | Ball control: 1
+
+### State Management
+**Between matches/series**: Call `reset_players()` once—it clears streaks, commentary, ball state, timers, `rounds`, `turn_count`. Never duplicate this logic.
+
+## Key Files
+- `scripts/MatchEngine.gd`: All match/series logic, simulators, summaries, MVP, JSON persistence
+- `scripts/Player.gd`: Stats, streaks, ball possession (max 2), `to_dict()` serialization
+- `scripts/MatchRound.gd`: Action log entry (thrower, target, outcome, commentary, power breakdown, streaks)
+- `CampaignManager.gd`: Aggregates series into campaigns, tracks player profiles/fame/MVP tallies
+
+## Conventions
+- **Commentary templates**: Keyed by `"{outcome}_{archetype}"` with fallback to `"{outcome}_Default"`. Keep emoji/tone consistent with existing strings.
+- **Revive ordering**: First eliminated teammate returns (stable ordering). Document if changing priority.
+- **Ball pickups (design hooks)**: `attempt_ball_pickup(player, zone)` supports safe/contested/exposed zones with instinct/hustle rolls. Not yet integrated into main loop.
+- **JSON persistence**: `save_report_to_json` pretty-prints with tabs; `load_report_from_json` uses Godot `FileAccess`. Extend report shape cautiously, keep loader tolerant.
+
+## Style
+- Concise GDScript, emoji for log clarity (`🎯`, `🤝`, `🌀`, `⏳`, `💬`)
+- Light comments only when non-obvious
+- Print statements use formatting: `"⏱️ %.2f | %s throws at %s → %s" % [time, thrower, target, outcome]`
+
+## Multiplayer Considerations
+- **Deterministic sim**: All RNG uses seeded `RandomNumberGenerator` to ensure identical outcomes across clients with same seed
+- **Action authority**: `choose_action` is placeholder AI; will be replaced with player input. Keep action simulators (`simulate_throw`, etc.) stateless and replayable
+- **State sync points**: `MatchRound` entries are authoritative events. Network layer should transmit these, not individual stat changes
+- **Latency design**: Reaction timers provide natural buffer for input lag. Consider predictive client-side actions with server reconciliation
+- **Cross-platform**: Godot 4.5 exports to desktop, web (WASM), and mobile. Keep UI/input abstractions platform-agnostic
+
+## Before Making Changes
+If modifying ball shield bonus, dual-ball defense, contested pickups, or core resolution math—**flag it first**. These systems cascade through `resolve_throw`, `choose_action`, summaries, and MVP scoring. When adding networked features, ensure all game logic remains deterministic and state changes are logged as `MatchRound` events.
