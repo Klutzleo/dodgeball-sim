@@ -14,3 +14,9 @@ config/name="DodgeballSim"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
+
+[window]
+
+window/size/viewport_width=1400
+window/size/viewport_height=900
+window/size/resizable=true

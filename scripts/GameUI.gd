@@ -3,31 +3,43 @@ class_name GameUI
 
 var match_engine: MatchEngine
 var players: Array = []
-var screen_width: float = 1200
-var screen_height: float = 400
+var screen_width: float = 1400
+var screen_height: float = 900
 var court_margin: float = 50
 var court_left: float = court_margin
 var court_right: float = screen_width - court_margin
 var court_top: float = court_margin
-var court_bottom: float = screen_height - court_margin
+var court_bottom: float = 500  # Leave room for console below
 
 var ui_font: Font
 var ui_font_size: int = 14
 
 # Live console for match output
 var console_lines: Array = []
-var max_console_lines: int = 8
+var max_console_lines: int = 15  # Show more lines
+var console_scroll: float = 0.0  # Scroll position
 
 # Player visual positions (for court display)
 var player_positions: Dictionary = {}
 
+# Real-time match state
+var match_running: bool = false
+var match_time: float = 0.0
+var dev_mode: bool = true  # Set to false for official 6-min halves, true for 2-min halves
+var max_match_time: float = 240.0 if dev_mode else 720.0  # 2-min halves (dev) or 6-min halves (official)
+var time_step: float = 0.5  # Seconds per simulation step
+var accumulated_time: float = 0.0
+
 func _ready():
-	set_process(false)  # Will start after match init
+	set_process(true)
 	ui_font = ThemeDB.fallback_font
 	ui_font_size = 14
 	
 	# Create match engine
 	match_engine = MatchEngine.new()
+	
+	# Set up callback so match logs go to screen
+	match_engine.ui_callback = Callable(self, "add_console_line")
 	
 	# Initialize players
 	initialize_teams()
@@ -89,8 +101,8 @@ func initialize_teams():
 		player_positions[blue_team[i].name] = Vector2(blue_x, court_top + 30 + i * y_spacing)
 
 func start_match():
-	set_process(true)
-	print("🎮 Match starting! Watch the court above.")
+	var mode_str = "DEV (2-min halves)" if dev_mode else "OFFICIAL (6-min halves)"
+	print("🎮 Match starting! %s..." % mode_str)
 	
 	if players.is_empty():
 		print("❌ No players initialized!")
@@ -98,16 +110,11 @@ func start_match():
 		return
 	
 	match_engine.simulate_opening_rush(players)
-	add_console_line("Opening rush complete!")
+	add_console_line("Opening rush complete! Match in progress...")
 	
-	var winner = match_engine.simulate_match(360.0, 0.5)
-	var summary = match_engine.generate_match_summary(match_engine.rounds)
-	var mvp = match_engine.detect_mvp(summary)
-	
-	add_console_line("🏁 Match Over! %s wins!" % winner)
-	add_console_line("🏅 MVP: %s" % mvp["name"])
-	
-	match_engine.print_match_summary(summary)
+	match_running = true
+	match_time = 0.0
+	accumulated_time = 0.0
 
 func add_console_line(line: String):
 	console_lines.append(line)
@@ -148,15 +155,110 @@ func _draw():
 		draw_string(ui_font, pos + Vector2(-20, 25), label, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
 	
 	# Console output at bottom
-	draw_rect(Rect2(court_left, court_bottom + 20, court_right - court_left, 150), Color.BLACK.lerp(Color.DARK_SLATE_GRAY, 0.5))
-	var console_y = court_bottom + 30
-	for line in console_lines:
-		draw_string(ui_font, Vector2(court_left + 10, console_y), line, HORIZONTAL_ALIGNMENT_LEFT, -1, ui_font_size)
-		console_y += 18
+	var console_height = 350
+	var console_x = court_left
+	var console_y_top = court_bottom + 20
+	
+	# Background
+	draw_rect(Rect2(console_x, console_y_top, court_right - court_left, console_height), Color.BLACK.lerp(Color.DARK_SLATE_GRAY, 0.5))
+	draw_rect(Rect2(console_x, console_y_top, court_right - court_left, console_height), Color.WHITE, false, 1.0)
+	
+	# Title
+	draw_string(ui_font, Vector2(console_x + 10, console_y_top + 5), "📋 Match Log", HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+	
+	# Calculate scrollable area
+	var _console_content_width = court_right - court_left - 30  # Leave room for scrollbar
+	var console_content_height = console_height - 25
+	var line_height = 16.0
+	var max_visible_lines = int(console_content_height / line_height)
+	var total_lines_height = float(console_lines.size() * line_height)
+	
+	# Auto-scroll to bottom
+	if total_lines_height > console_content_height:
+		console_scroll = max(0, total_lines_height - console_content_height)
+	else:
+		console_scroll = 0
+	
+	# Draw console lines with clipping
+	var start_line = int(console_scroll / line_height)
+	var console_y = console_y_top + 25 - int(console_scroll) % int(line_height)
+	
+	for i in range(start_line, min(start_line + max_visible_lines + 1, console_lines.size())):
+		if i < console_lines.size():
+			draw_string(ui_font, Vector2(console_x + 10, console_y), console_lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, ui_font_size)
+			console_y += int(line_height)
+	
+	# Draw scrollbar
+	if total_lines_height > console_content_height:
+		var scrollbar_x = court_right - 15
+		var scrollbar_height = console_content_height
+		var scroll_thumb_height = max(20.0, (console_content_height * console_content_height) / total_lines_height)
+		var scroll_thumb_pos = (console_scroll / total_lines_height) * (scrollbar_height - scroll_thumb_height)
+		
+		# Scrollbar background
+		draw_rect(Rect2(scrollbar_x, console_y_top + 25, 10, scrollbar_height), Color.DARK_GRAY)
+		# Scrollbar thumb
+		draw_rect(Rect2(scrollbar_x, console_y_top + 25 + scroll_thumb_pos, 10, scroll_thumb_height), Color.GRAY)
 	
 	# Title & instructions
 	draw_string(ui_font, Vector2(court_left, 10), "🏐 DODGEBALL SIM - Live View (Red vs Blue)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
+	
+	# Timer display
+	var time_str = "⏱️ Time: %.1f / %.0f" % [match_time, max_match_time]
+	var status_str = "Match: %s" % ("RUNNING" if match_running else "ENDED")
+	draw_string(ui_font, Vector2(court_right - 300, 10), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+	draw_string(ui_font, Vector2(court_right - 300, 30), status_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 
-func _process(_delta):
-	# Console is populated by match callbacks via add_console_line
-	pass
+func _process(delta):
+	if not match_running:
+		return
+	
+	# Accumulate real time
+	accumulated_time += delta
+	
+	# Step the simulation when enough real time has passed
+	while accumulated_time >= time_step and match_time <= max_match_time:
+		accumulated_time -= time_step
+		
+		# Run one step of the match
+		match_engine.simulate_reaction_queue(match_time)
+		match_time += time_step
+		
+		# Check win condition
+		var alive_teams := {}
+		for p in players:
+			if p.alive:
+				alive_teams[p.team] = true
+		
+		if alive_teams.size() < 2:
+			end_match(alive_teams.keys()[0] if alive_teams.size() > 0 else "Draw")
+			return
+	
+	# Check time limit
+	if match_time >= max_match_time:
+		end_match("Draw")
+	
+	queue_redraw()
+
+func _input(event):
+	"""Handle mouse wheel for scrolling"""
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			console_scroll += 50
+			queue_redraw()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			console_scroll = max(0, console_scroll - 50)
+			queue_redraw()
+
+func end_match(winner: String):
+	match_running = false
+	var summary = match_engine.generate_match_summary(match_engine.rounds)
+	var mvp = match_engine.detect_mvp(summary)
+	
+	add_console_line("🏁 Match Over! %s wins!" % winner)
+	add_console_line("🏅 MVP: %s" % mvp["name"])
+	
+	print("\n==================================================")
+	print("MATCH COMPLETE")
+	print("==================================================")
+	match_engine.print_match_summary(summary)

@@ -7,6 +7,15 @@ var rounds: Array = []
 var turn_count: int = 0
 var rng := RandomNumberGenerator.new()
 
+# 🧩 UI Callback for live logging
+var ui_callback: Callable = Callable()  # Will be set by GameUI
+
+func log_action(msg: String):
+	"""Log action to console and UI if callback is set"""
+	print(msg)
+	if ui_callback.is_valid():
+		ui_callback.call(msg)
+
 # 🧩 Opening Rush
 func simulate_opening_rush(players: Array) -> void:
 	var ball_grab_scores := []
@@ -75,19 +84,48 @@ func revive_teammate(thrower: Player) -> Player:
 func generate_commentary(round: MatchRound) -> String:
 	var key = "%s_%s" % [round.outcome, round.target.archetype]
 	var templates = {
+		# Dodged outcomes
 		"Dodged_Default": "%s saw it coming and moved fast.",
-		"Caught_Default": "%s snatched it mid-air—%s is out.",
-		"Hit_Default": "%s landed the hit—%s is out.",
 		"Dodged_Ghost": "%s melted away like a whisper.",
+		"Dodged_Hothead": "%s spun away with explosive reflexes!",
+		"Dodged_Strategist": "%s anticipated that and sidestepped cleanly.",
+		
+		# Caught outcomes
+		"Caught_Default": "%s snatched it mid-air—%s is out.",
 		"Caught_Hothead": "%s lunged and grabbed it—classic hothead reflex.",
+		"Caught_Ghost": "%s materialized to catch it mid-flight.",
+		"Caught_Strategist": "%s read the trajectory perfectly and caught it.",
+		
+		# Hit outcomes
+		"Hit_Default": "%s landed the hit—%s is out.",
+		"Hit_Hothead": "%s got smashed—%s brought the heat!",
+		"Hit_Ghost": "%s couldn't escape—caught by the phantom!",
 		"Hit_Strategist": "%s calculated the angle and scored.",
-		"Revived_Default": "%s caught it! %s returns to the fray!"
+		
+		# Revived outcomes
+		"Revived_Default": "%s caught it! %s returns to the fray!",
+		
+		# Pass outcomes
+		"Pass_Default": "%s passed to %s.",
+		
+		# Hold outcomes
+		"Hold_Default": "%s held the ball steady.",
+		
+		# Taunt outcomes
+		"Taunt_Default": "%s taunted the other team.",
+		
+		# Dodge (self-action) outcomes
+		"Dodge_Default": "%s dodged preemptively."
 	}
+	
 	if templates.has(key):
-		return templates[key].format(round.target.name, round.thrower.name)
+		return templates[key].format([round.target.name, round.thrower.name])
 	else:
 		var fallback = "%s_Default" % round.outcome
-		return templates.get(fallback, "A moment passes.").format(round.target.name, round.thrower.name)
+		if templates.has(fallback):
+			return templates[fallback].format([round.target.name, round.thrower.name])
+		else:
+			return "A moment passes."
 
 # 🧩 Clutch Detection
 func detect_clutch(round: MatchRound) -> bool:
@@ -237,8 +275,9 @@ func simulate_reaction_queue(current_time: float) -> void:
 			round.target_clutch_streak = round.target.clutch_streak
 
 			rounds.append(round)
-			print("⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome])
-			print("Commentary: %s" % round.commentary)
+			var action_msg = "⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome]
+			log_action(action_msg)
+			log_action("   %s" % round.commentary)
 
 			# Reset reaction timer
 			var base_time = 6.0
@@ -312,8 +351,9 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	round.target_clutch_streak = round.target.clutch_streak
 
 	rounds.append(round)
-	print("🎯 %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome])
-	print("Commentary: %s" % round.commentary)
+	var action_msg = "🎯 %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome]
+	log_action(action_msg)
+	log_action("   %s" % round.commentary)
 
 func simulate_pass(p: Player, current_time: float) -> void:
 	var teammate_pool := players.filter(func(t): return t.alive and t.team == p.team and t != p)
