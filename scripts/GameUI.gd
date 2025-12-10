@@ -5,11 +5,11 @@ var match_engine: MatchEngine
 var players: Array = []
 var screen_width: float = 1400
 var screen_height: float = 900
-var court_margin: float = 50
+var court_margin: float = 40
 var court_left: float = court_margin
 var court_right: float = screen_width - court_margin
-var court_top: float = court_margin
-var court_bottom: float = 500  # Leave room for console below
+var court_top: float = 70  # Leave room for title at top
+var court_bottom: float = 450  # Leave room for console below
 
 var ui_font: Font
 var ui_font_size: int = 14
@@ -29,6 +29,8 @@ var dev_mode: bool = true  # Set to false for official 6-min halves, true for 2-
 var max_match_time: float = 240.0 if dev_mode else 720.0  # 2-min halves (dev) or 6-min halves (official)
 var time_step: float = 0.5  # Seconds per simulation step
 var accumulated_time: float = 0.0
+var user_scrolling: bool = false  # Track if user is manually scrolling
+var scroll_idle_time: float = 0.0  # Time since last scroll
 
 func _ready():
 	set_process(true)
@@ -155,9 +157,11 @@ func _draw():
 		draw_string(ui_font, pos + Vector2(-20, 25), label, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
 	
 	# Console output at bottom
-	var console_height = 350
+	var console_height = screen_height - court_bottom - 40
 	var console_x = court_left
-	var console_y_top = court_bottom + 20
+	var console_y_top = court_bottom + 10
+	var console_content_width = court_right - court_left - 20
+	var console_content_height = console_height - 35
 	
 	# Background
 	draw_rect(Rect2(console_x, console_y_top, court_right - court_left, console_height), Color.BLACK.lerp(Color.DARK_SLATE_GRAY, 0.5))
@@ -167,38 +171,39 @@ func _draw():
 	draw_string(ui_font, Vector2(console_x + 10, console_y_top + 5), "📋 Match Log", HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
 	
 	# Calculate scrollable area
-	var _console_content_width = court_right - court_left - 30  # Leave room for scrollbar
-	var console_content_height = console_height - 25
 	var line_height = 16.0
 	var max_visible_lines = int(console_content_height / line_height)
 	var total_lines_height = float(console_lines.size() * line_height)
 	
-	# Auto-scroll to bottom
-	if total_lines_height > console_content_height:
-		console_scroll = max(0, total_lines_height - console_content_height)
-	else:
-		console_scroll = 0
+	# Limit scroll to valid range
+	var max_scroll = max(0.0, total_lines_height - console_content_height)
+	console_scroll = clamp(console_scroll, 0.0, max_scroll)
+	
+	# Auto-scroll to bottom when new lines added (unless user is manually scrolling)
+	if not user_scrolling and total_lines_height > console_content_height:
+		console_scroll = max_scroll
 	
 	# Draw console lines with clipping
 	var start_line = int(console_scroll / line_height)
 	var console_y = console_y_top + 25 - int(console_scroll) % int(line_height)
 	
-	for i in range(start_line, min(start_line + max_visible_lines + 1, console_lines.size())):
-		if i < console_lines.size():
+	for i in range(start_line, min(start_line + max_visible_lines + 2, console_lines.size())):
+		if i < console_lines.size() and console_y < console_y_top + console_height:
 			draw_string(ui_font, Vector2(console_x + 10, console_y), console_lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, ui_font_size)
 			console_y += int(line_height)
 	
 	# Draw scrollbar
 	if total_lines_height > console_content_height:
-		var scrollbar_x = court_right - 15
-		var scrollbar_height = console_content_height
+		var scrollbar_x = court_right - 12
+		var scrollbar_width = 8.0
+		var scrollbar_height = console_content_height - 2
 		var scroll_thumb_height = max(20.0, (console_content_height * console_content_height) / total_lines_height)
-		var scroll_thumb_pos = (console_scroll / total_lines_height) * (scrollbar_height - scroll_thumb_height)
+		var scroll_thumb_pos = (console_scroll / max_scroll) * (scrollbar_height - scroll_thumb_height)
 		
-		# Scrollbar background
-		draw_rect(Rect2(scrollbar_x, console_y_top + 25, 10, scrollbar_height), Color.DARK_GRAY)
+		# Scrollbar track
+		draw_rect(Rect2(scrollbar_x, console_y_top + 25, scrollbar_width, scrollbar_height), Color.DARK_GRAY)
 		# Scrollbar thumb
-		draw_rect(Rect2(scrollbar_x, console_y_top + 25 + scroll_thumb_pos, 10, scroll_thumb_height), Color.GRAY)
+		draw_rect(Rect2(scrollbar_x, console_y_top + 25 + scroll_thumb_pos, scrollbar_width, scroll_thumb_height), Color.LIGHT_GRAY)
 	
 	# Title & instructions
 	draw_string(ui_font, Vector2(court_left, 10), "🏐 DODGEBALL SIM - Live View (Red vs Blue)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
@@ -210,6 +215,13 @@ func _draw():
 	draw_string(ui_font, Vector2(court_right - 300, 30), status_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 
 func _process(delta):
+	# Track scroll idle time - auto-scroll to bottom after 3 seconds of inactivity
+	if user_scrolling:
+		scroll_idle_time += delta
+		if scroll_idle_time > 3.0:
+			user_scrolling = false
+			scroll_idle_time = 0.0
+	
 	if not match_running:
 		return
 	
@@ -245,10 +257,16 @@ func _input(event):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			console_scroll += 50
+			user_scrolling = true
+			scroll_idle_time = 0.0
 			queue_redraw()
+			get_tree().root.set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			console_scroll = max(0, console_scroll - 50)
+			user_scrolling = true
+			scroll_idle_time = 0.0
 			queue_redraw()
+			get_tree().root.set_input_as_handled()
 
 func end_match(winner: String):
 	match_running = false
