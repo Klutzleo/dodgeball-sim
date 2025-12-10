@@ -3,13 +3,13 @@ class_name GameUI
 
 var match_engine: MatchEngine
 var players: Array = []
-var screen_width: float = 1400
-var screen_height: float = 900
-var court_margin: float = 40
+var screen_width: float = 1450
+var screen_height: float = 950
+var court_margin: float = 35
 var court_left: float = court_margin
 var court_right: float = screen_width - court_margin
-var court_top: float = 70  # Leave room for title at top
-var court_bottom: float = 450  # Leave room for console below
+var court_top: float = 55  # Leave room for title
+var court_bottom: float = 480  # Leave room for console
 
 var ui_font: Font
 var ui_font_size: int = 14
