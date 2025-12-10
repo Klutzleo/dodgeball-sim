@@ -1,3 +1,6 @@
-[gd_scene format=3 uid="uid://ctuk1xxwcx1y"]
+[gd_scene load_steps=2 format=3 uid="uid://ctuk1xxwcx1y"]
 
-[node name="Node2D" type="Node2D"]
+[ext_resource type="Script" path="res://scripts/GameUI.gd" id="1_gameui"]
+
+[node name="GameUI" type="Node2D"]
+script = ExtResource("1_gameui")
