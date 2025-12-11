@@ -6,6 +6,7 @@ Godot-based **multiplayer** dodgeball sim featuring real-time action resolution,
 ## Dev Workflow
 - **Run/debug**: Open project in Godot 4.5, run `Main.tscn`. No build scripts or test framework; validate via Godot console output and printed logs.
 - **Feedback loop**: All gameplay outputs to console with emoji-prefixed timestamps (`⏱️`, `🎯`, `🤝`, etc.). Check terminal for action flow, commentary, and summaries.
+- **UI**: Live match log console (scrollable) at bottom of screen with auto-scroll. Stats overlay panel pops up on match end with team summaries and player breakdown.
 - **No external deps**: Pure GDScript, no plugins. Aseprite for sprites (future), but prototype is code-driven.
 - **Multiplayer target**: Game is being built for online multiplayer from the ground up. Current sim engine provides the foundation for networked gameplay via Firebase/Supabase sync.
 
@@ -65,16 +66,42 @@ Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_strea
 
 ### MVP Scoring
 `calculate_impact_score` weights:
-- Hits: 5 | Catches: 4 | Dodges: 3 | Passes: 2 | Revives: 4
+- Hits: 5 | Catches: 4 | Dodges: 3 | Passes: 2
 - Holds/Taunts: 1 | Hit streak: 2 | Clutch streak: 3 | Ball control: 1
+- **Note**: Revives removed as redundant stat (catches = revives + defensive wins without revives)
 
 ### State Management
-**Between matches/series**: Call `reset_players()` once—it clears streaks, commentary, ball state, timers, `rounds`, `turn_count`. Never duplicate this logic.
+**Between matches/series**: Call `reset_players()` once—it clears streaks, commentary, ball state, timers, `rounds`, `turn_count`, `times_eliminated`. Never duplicate this logic.
+
+### Ball Management & Drops
+**Ball accounting**: `TOTAL_BALLS = 6` constant enforced via `loose_balls` counter + player `ball_count`.
+- **Drop logic**: When a player is eliminated, their held balls go to `loose_balls` + the thrown ball.
+- **Drop bias**: `give_dropped_ball()` biases dropped balls to same team (~92%), with ~8% chance to cross midcourt.
+- **Rebalancing**: `rebalance_balls()` distributes loose balls to alive players with capacity, prioritizing by `hustle + instinct`.
+
+### Catch & Revive Mechanics
+- **Catch outcome**: When target catches thrower's ball, target gets +1 catch and revives first eliminated teammate (if any exist).
+- **Revive order**: `revive_teammate()` returns first eliminated player in order (FIFO on elimination).
+- **No teammate to revive**: If all teammates alive when catch occurs, catcher gets ball but no revive happens (catch still counts).
+- **Match log**: Catches logged as `"Caught: [catcher] caught the ball! ↩️ [revived] revived!"` or `"(No one to revive!)"` if team full.
+
+### Stats & Counts
+- **Hits**: Offensive eliminations (every "Hit" outcome increments thrower's hit count).
+- **Catches**: Defensive wins (every "Caught" outcome increments target's catch count), with or without revives.
+- **Times Eliminated**: Counter tracking total times a player was eliminated (increments on `eliminate()`, resets with other stats).
+- **Players Remaining**: Live count of alive players per team shown in match end stats.
+
+### UI Components
+**GameUI.gd provides**:
+- **Court display**: Red left, Blue right; shows player circles (dimmed if eliminated), ball indicators.
+- **Match log**: Scrollable console at bottom, auto-scrolls unless user scrolling. Wheel events captured by scrolling UI only.
+- **Stats panel**: Overlay showing team summary (hits, catches, dodges, passes, players remaining), individual player breakdown, MVP info. Scrollable if content exceeds height.
 
 ## Key Files
 - `scripts/MatchEngine.gd`: All match/series logic, simulators, summaries, MVP, JSON persistence
-- `scripts/Player.gd`: Stats, streaks, ball possession (max 2), `to_dict()` serialization
-- `scripts/MatchRound.gd`: Action log entry (thrower, target, outcome, commentary, power breakdown, streaks)
+- `scripts/Player.gd`: Stats, streaks, ball possession (max 2), `times_eliminated` counter, `to_dict()` serialization
+- `scripts/MatchRound.gd`: Action log entry (thrower, target, outcome, commentary, power breakdown, streaks, revived player)
+- `scripts/GameUI.gd`: Real-time match visualization (court, player positions, ball state), match log console, stats overlay panel
 - `CampaignManager.gd`: Aggregates series into campaigns, tracks player profiles/fame/MVP tallies
 
 ## Conventions
@@ -96,4 +123,13 @@ Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_strea
 - **Cross-platform**: Godot 4.5 exports to desktop, web (WASM), and mobile. Keep UI/input abstractions platform-agnostic
 
 ## Before Making Changes
-If modifying ball shield bonus, dual-ball defense, contested pickups, or core resolution math—**flag it first**. These systems cascade through `resolve_throw`, `choose_action`, summaries, and MVP scoring. When adding networked features, ensure all game logic remains deterministic and state changes are logged as `MatchRound` events.
+If modifying ball shield bonus, dual-ball defense, drop bias, catch/revive logic, or core resolution math—**flag it first**. These systems cascade through `resolve_throw`, `choose_action`, summaries, and MVP scoring. When adding networked features, ensure all game logic remains deterministic and state changes are logged as `MatchRound` events.
+
+## Recent Updates (December 2025)
+- **UI Polish**: Added GameUI with live court visualization, scrollable match log console, and stats overlay panel.
+- **Ball Accounting**: Implemented `loose_balls` tracking and `rebalance_balls()` to prevent stalls when balls disappear.
+- **Drop Bias**: Dropped balls favor same team (~92%), with rare cross-court turnovers (~8%).
+- **Catch Revive Fix**: Fixed bug where catches were reviving the thrower's team instead of the catcher's team.
+- **Stats Clarity**: Removed redundant "Revives" stat (subsumed by catches). Added "Times Eliminated" tracking and "Players Remaining" display.
+- **Match Log**: Catches now log who was revived, e.g., `"Caught: Red3 caught the ball! ↩️ Red6 revived!"` or `"(No one to revive!)"`.
+- **Code Quality**: Full lint cleanup (no shadowed variables, proper static calls, clear variable naming).
