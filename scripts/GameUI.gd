@@ -5,11 +5,12 @@ var match_engine: MatchEngine
 var players: Array = []
 var screen_width: float = 1450
 var screen_height: float = 950
-var court_margin: float = 35
+var court_margin: float = 24
+var court_inner_pad: float = 20
 var court_left: float = court_margin
 var court_right: float = screen_width - court_margin
-var court_top: float = 55  # Leave room for title
-var court_bottom: float = 480  # Leave room for console
+var court_top: float = 60  # Leave room for title
+var court_bottom: float = 0  # Computed in _ready
 
 var ui_font: Font
 var ui_font_size: int = 14
@@ -46,7 +47,18 @@ func _ready():
 	# Initialize players
 	initialize_teams()
 	
-	# Set custom window size for visibility
+	# Read actual viewport and compute court + console bounds
+	var vp_size: Vector2i = get_viewport().get_visible_rect().size
+	screen_width = float(vp_size.x)
+	screen_height = float(vp_size.y)
+	court_left = court_margin
+	court_right = screen_width - court_margin
+	# Target console height ~ 30% of screen
+	var console_target: float = max(260.0, screen_height * 0.30)
+	court_top = 60.0
+	court_bottom = max(court_top + 220.0, screen_height - console_target - 10.0)
+
+	# Ensure window size matches
 	get_window().size = Vector2i(int(screen_width), int(screen_height))
 	
 	# Auto-start match after scene loads
@@ -95,12 +107,12 @@ func initialize_teams():
 	# Calculate static court positions (Red left, Blue right)
 	var red_x = court_left + 100
 	var blue_x = court_right - 100
-	var y_spacing = (court_bottom - court_top) / 6.0
+	var y_spacing = (court_bottom - court_top - 2.0 * court_inner_pad) / 6.0
 	
 	for i in range(6):
-		player_positions[red_team[i].name] = Vector2(red_x, court_top + 30 + i * y_spacing)
+		player_positions[red_team[i].name] = Vector2(red_x, court_top + court_inner_pad + i * y_spacing)
 	for i in range(6):
-		player_positions[blue_team[i].name] = Vector2(blue_x, court_top + 30 + i * y_spacing)
+		player_positions[blue_team[i].name] = Vector2(blue_x, court_top + court_inner_pad + i * y_spacing)
 
 func start_match():
 	var mode_str = "DEV (2-min halves)" if dev_mode else "OFFICIAL (6-min halves)"
@@ -156,16 +168,16 @@ func _draw():
 		var label = p.name.substr(0, 5)
 		draw_string(ui_font, pos + Vector2(-20, 25), label, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
 	
-	# Console output at bottom
-	var console_height = screen_height - court_bottom - 40
+	# Console output at bottom (fill remaining space)
 	var console_x = court_left
-	var console_y_top = court_bottom + 10
-	var console_content_width = court_right - court_left - 20
-	var console_content_height = console_height - 35
+	var console_y_top = court_bottom + 8
+	var console_width = court_right - court_left
+	var console_height = max(280.0, screen_height - console_y_top - court_margin)
+	var console_content_height = console_height - 35.0
 	
 	# Background
-	draw_rect(Rect2(console_x, console_y_top, court_right - court_left, console_height), Color.BLACK.lerp(Color.DARK_SLATE_GRAY, 0.5))
-	draw_rect(Rect2(console_x, console_y_top, court_right - court_left, console_height), Color.WHITE, false, 1.0)
+	draw_rect(Rect2(console_x, console_y_top, console_width, console_height), Color.BLACK.lerp(Color.DARK_SLATE_GRAY, 0.5))
+	draw_rect(Rect2(console_x, console_y_top, console_width, console_height), Color.WHITE, false, 1.0)
 	
 	# Title
 	draw_string(ui_font, Vector2(console_x + 10, console_y_top + 5), "📋 Match Log", HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
@@ -194,7 +206,7 @@ func _draw():
 	
 	# Draw scrollbar
 	if total_lines_height > console_content_height:
-		var scrollbar_x = court_right - 12
+		var scrollbar_x = console_x + console_width - 12
 		var scrollbar_width = 8.0
 		var scrollbar_height = console_content_height - 2
 		var scroll_thumb_height = max(20.0, (console_content_height * console_content_height) / total_lines_height)
@@ -206,13 +218,13 @@ func _draw():
 		draw_rect(Rect2(scrollbar_x, console_y_top + 25 + scroll_thumb_pos, scrollbar_width, scroll_thumb_height), Color.LIGHT_GRAY)
 	
 	# Title & instructions
-	draw_string(ui_font, Vector2(court_left, 10), "🏐 DODGEBALL SIM - Live View (Red vs Blue)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
+	draw_string(ui_font, Vector2(court_left, 24), "🏐 DODGEBALL SIM - Live View (Red vs Blue)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
 	
 	# Timer display
 	var time_str = "⏱️ Time: %.1f / %.0f" % [match_time, max_match_time]
 	var status_str = "Match: %s" % ("RUNNING" if match_running else "ENDED")
-	draw_string(ui_font, Vector2(court_right - 300, 10), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
-	draw_string(ui_font, Vector2(court_right - 300, 30), status_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+	draw_string(ui_font, Vector2(court_right - 320, 24), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+	draw_string(ui_font, Vector2(court_right - 320, 44), status_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 
 func _process(delta):
 	# Track scroll idle time - auto-scroll to bottom after 3 seconds of inactivity

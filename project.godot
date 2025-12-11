@@ -15,8 +15,11 @@ run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
 
-[window]
+[display]
 
 window/size/viewport_width=1450
 window/size/viewport_height=950
 window/size/resizable=true
+# Ensure editor Play window uses these sizes
+window/size/test_width=1450
+window/size/test_height=950
