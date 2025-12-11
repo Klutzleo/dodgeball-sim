@@ -25,6 +25,7 @@ func revive():
 func eliminate():
 	alive = false
 	drop_all_balls()
+	times_eliminated += 1
 	
 # Streaks
 var hit_streak: int = 0
@@ -32,6 +33,7 @@ var dodge_streak: int = 0
 var catch_streak: int = 0
 var clutch_streak: int = 0
 var max_ball_count: int = 0
+var times_eliminated: int = 0
 
 func reset():
 	alive = true
@@ -41,6 +43,7 @@ func reset():
 	catch_streak = 0
 	clutch_streak = 0
 	max_ball_count = 0
+	times_eliminated = 0
 
 func give_ball(count: int = 1):
 	ball_count = clamp(ball_count + count, 0, max_balls)
@@ -69,5 +72,6 @@ func to_dict() -> Dictionary:
 			"dodge": dodge_streak,
 			"catch": catch_streak,
 			"clutch": clutch_streak
-		}
+		},
+		"times_eliminated": times_eliminated
 	}

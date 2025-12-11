@@ -6,6 +6,8 @@ var players: Array = []
 var rounds: Array = []
 var turn_count: int = 0
 var rng := RandomNumberGenerator.new()
+var loose_balls: int = 0
+const TOTAL_BALLS: int = 6
 
 # 🧩 UI Callback for live logging
 var ui_callback: Callable = Callable()  # Will be set by GameUI
@@ -16,41 +18,99 @@ func log_action(msg: String):
 	if ui_callback.is_valid():
 		ui_callback.call(msg)
 
+# 🧮 Utility: keep total balls accounted for and pick up loose ones
+func give_dropped_ball(preferred_team: String):
+	var preferred := players.filter(func(p): return p.alive and p.team == preferred_team and p.ball_count < p.max_balls)
+	var other := players.filter(func(p): return p.alive and p.team != preferred_team and p.ball_count < p.max_balls)
+
+	# ~92% chance the ball stays with the same side, ~8% it rolls across mid
+	var roll = rng.randf()
+	var pool: Array = []
+	if roll < 0.08 and not other.is_empty():
+		pool = other
+	elif not preferred.is_empty():
+		pool = preferred
+	elif not other.is_empty():
+		pool = other
+
+	if pool.size() > 0:
+		pool.sort_custom(func(a, b):
+			var sa = a.stats["hustle"] + a.stats["instinct"]
+			var sb = b.stats["hustle"] + b.stats["instinct"]
+			return sb - sa
+		)
+		var picker: Player = pool[0]
+		picker.give_ball(1)
+		return
+
+	# No one can take it right now; track as loose for later rebalance
+	loose_balls += 1
+
+func rebalance_balls():
+	var on_players = 0
+	for p in players:
+		on_players += p.ball_count
+	var missing = TOTAL_BALLS - (on_players + loose_balls)
+	if missing > 0:
+		loose_balls += missing
+
+	if loose_balls <= 0:
+		return
+
+	var eligible := players.filter(func(p): return p.alive and p.ball_count < p.max_balls)
+	if eligible.is_empty():
+		return
+
+	eligible.sort_custom(func(a, b):
+		var sa = a.stats["hustle"] + a.stats["instinct"]
+		var sb = b.stats["hustle"] + b.stats["instinct"]
+		return sb - sa
+	)
+
+	var idx = 0
+	while loose_balls > 0 and eligible.size() > 0:
+		var p: Player = eligible[idx % eligible.size()]
+		if p.ball_count < p.max_balls:
+			p.give_ball(1)
+			loose_balls -= 1
+		idx += 1
+
 # 🧩 Opening Rush
-func simulate_opening_rush(players: Array) -> void:
+func simulate_opening_rush(player_list: Array) -> void:
 	var ball_grab_scores := []
 
-	for p in players:
+	for p in player_list:
 		p.drop_all_balls()
+	loose_balls = 0
 
-	for p in players:
+	for p in player_list:
 		var score = p.stats["hustle"] + p.stats["ferocity"] + rng.randi_range(0, 5)
 		ball_grab_scores.append({ "player": p, "score": score })
 
 	ball_grab_scores.sort_custom(func(a, b): return b["score"] - a["score"])
 
-	for i in range(6):
-		var p = ball_grab_scores[i]["player"]
-		p.give_ball(1)
-		p.commentary.append("🏃‍♂️ Grabbed a ball in the opening rush!")
-		var base_time = 6.0
-		var modifier = 0.5
-		var reaction_time = base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
-		p.reaction_timer = reaction_time
-
-	for i in range(6, ball_grab_scores.size()):
-		var p = ball_grab_scores[i]["player"]
-		p.commentary.append("😬 Missed the ball scramble.")
+	# Fastest six grab the six balls (speed wins the scramble)
+	for i in range(ball_grab_scores.size()):
+		var p: Player = ball_grab_scores[i]["player"]
+		if i < TOTAL_BALLS:
+			p.give_ball(1)
+			p.commentary.append("🏃‍♂️ Grabbed a ball in the opening rush!")
+			var base_time = 6.0
+			var modifier = 0.5
+			var reaction_time = base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
+			p.reaction_timer = reaction_time
+		else:
+			p.commentary.append("😬 Missed the ball scramble.")
 
 # 🧩 Throw Resolution
-func resolve_throw(thrower: Player, target: Player, rng: RandomNumberGenerator) -> Dictionary:
+func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGenerator) -> Dictionary:
 	var throw_power = thrower.stats["accuracy"] + thrower.stats["ferocity"]
 	var dodge_power = target.stats["instinct"] + target.stats["hustle"]
 	var dodge_bonus = 1 if target.ball_count > 0 else 0  # Ball shield bonus
 	dodge_power += dodge_bonus
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
 	var total = throw_power + dodge_power + catch_power
-	var roll = rng.randi_range(0, total - 1)
+	var roll = rng_local.randi_range(0, total - 1)
 
 	var outcome := ""
 	if roll < dodge_power:
@@ -81,8 +141,8 @@ func revive_teammate(thrower: Player) -> Player:
 	return null
 
 # 🧩 Commentary Engine
-func generate_commentary(round: MatchRound) -> String:
-	var key = "%s_%s" % [round.outcome, round.target.archetype]
+func generate_commentary(round_rec: MatchRound) -> String:
+	var key = "%s_%s" % [round_rec.outcome, round_rec.target.archetype]
 	var templates = {
 		# Dodged outcomes
 		"Dodged_Default": "%s saw it coming and moved fast.",
@@ -119,20 +179,20 @@ func generate_commentary(round: MatchRound) -> String:
 	}
 	
 	if templates.has(key):
-		return templates[key].format([round.target.name, round.thrower.name])
-	else:
-		var fallback = "%s_Default" % round.outcome
-		if templates.has(fallback):
-			return templates[fallback].format([round.target.name, round.thrower.name])
-		else:
-			return "A moment passes."
+		return templates[key].format([round_rec.target.name, round_rec.thrower.name])
+	
+	var fallback = "%s_Default" % round_rec.outcome
+	if templates.has(fallback):
+		return templates[fallback].format([round_rec.target.name, round_rec.thrower.name])
+	
+	return "A moment passes."
 
 # 🧩 Clutch Detection
-func detect_clutch(round: MatchRound) -> bool:
-	var dodge_cutoff = round.dodge_power
-	var catch_cutoff = round.dodge_power + round.catch_power
-	var total = round.throw_power + round.dodge_power + round.catch_power
-	var roll = round.roll
+func detect_clutch(round_rec: MatchRound) -> bool:
+	var dodge_cutoff = round_rec.dodge_power
+	var catch_cutoff = round_rec.dodge_power + round_rec.catch_power
+	var total = round_rec.throw_power + round_rec.dodge_power + round_rec.catch_power
+	var roll = round_rec.roll
 
 	return abs(roll - dodge_cutoff) <= 2 or abs(roll - catch_cutoff) <= 2 or abs(roll - total) <= 2
 
@@ -141,8 +201,8 @@ func choose_action(player: Player) -> String:
 	var weights := {}
 
 	var has_ball = player.ball_count > 0
-	var teammates_alive = players.filter(func(p): return p.alive and p.team == player.team and p != player).size()
-	var enemies_alive = players.filter(func(p): return p.alive and p.team != player.team).size()
+	var _teammates_alive = players.filter(func(p): return p.alive and p.team == player.team and p != player).size()
+	var _enemies_alive = players.filter(func(p): return p.alive and p.team != player.team).size()
 
 	# 🔥 Hothead: favors throw
 	if player.archetype == "Hothead":
@@ -206,6 +266,8 @@ func choose_action(player: Player) -> String:
 
 # 🧩 Real-Time Reaction Queue
 func simulate_reaction_queue(current_time: float) -> void:
+	rebalance_balls()
+
 	for p in players:
 		if not p.alive or p.ball_count == 0:
 			continue
@@ -216,68 +278,83 @@ func simulate_reaction_queue(current_time: float) -> void:
 				continue
 
 			var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
-			var round := MatchRound.new()
-			round.turn = turn_count
-			round.thrower = p
-			round.target = target
-			round.match_time = current_time
+			var round_rec := MatchRound.new()
+			round_rec.turn = turn_count
+			round_rec.thrower = p
+			round_rec.target = target
+			round_rec.match_time = current_time
 			p.take_ball(1)  # Spend one ball on this throw
 
+			var target_balls_before = target.ball_count
 			var result = resolve_throw(p, target, rng)
-			round.outcome = result["outcome"]
-			round.throw_power = result["throw_power"]
-			round.dodge_power = result["dodge_power"]
-			round.catch_power = result["catch_power"]
-			round.roll = result["roll"]
-			round.dodge_bonus = result.get("dodge_bonus", 0)
-			round.commentary = generate_commentary(round)
+			round_rec.outcome = result["outcome"]
+			round_rec.throw_power = result["throw_power"]
+			round_rec.dodge_power = result["dodge_power"]
+			round_rec.catch_power = result["catch_power"]
+			round_rec.roll = result["roll"]
+			round_rec.dodge_bonus = result.get("dodge_bonus", 0)
+			round_rec.commentary = generate_commentary(round_rec)
 
-			if round.outcome == "Caught":
-				var revived = revive_teammate(p)
-				round.revived_player = revived
-				round.ball_holder_after = revived if revived else target
-				if revived == null:
-					target.give_ball(1)
-			else:
-				round.ball_holder_after = target
-				target.give_ball(1)
+			match round_rec.outcome:
+				"Caught":
+					var revived = revive_teammate(target)
+					round_rec.revived_player = revived
+					round_rec.ball_holder_after = revived if revived else target
+					if revived == null:
+						target.give_ball(1)
+					var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
+					log_action("   %s caught the ball!%s" % [target.name, revived_msg])
+				"Hit":
+					# Target is eliminated inside resolve_throw; drop carried balls + thrown ball to loose pool
+					loose_balls += target_balls_before + 1
+					round_rec.ball_holder_after = null
+					# Ensure target has no balls
+					target.drop_all_balls()
+				"Dodged":
+					# Missed throw becomes a loose ball
+					loose_balls += 1
+					round_rec.ball_holder_after = null
+				_:
+					# Default: drop to loose
+					loose_balls += 1
+					round_rec.ball_holder_after = null
 
 			# Streak logic
-			if detect_clutch(round):
-				round.target.clutch_streak += 1
+			if detect_clutch(round_rec):
+				round_rec.target.clutch_streak += 1
 			else:
-				round.target.clutch_streak = 0
+				round_rec.target.clutch_streak = 0
 
 			for q in players:
-				if q != round.target and q != round.thrower:
+				if q != round_rec.target and q != round_rec.thrower:
 					q.hit_streak = 0
 					q.dodge_streak = 0
 					q.catch_streak = 0
 					q.clutch_streak = 0
 
-			match round.outcome:
+			match round_rec.outcome:
 				"Hit":
-					round.thrower.hit_streak += 1
-					round.target.hit_streak = 0
-					round.target.dodge_streak = 0
-					round.target.catch_streak = 0
+					round_rec.thrower.hit_streak += 1
+					round_rec.target.hit_streak = 0
+					round_rec.target.dodge_streak = 0
+					round_rec.target.catch_streak = 0
 				"Dodged":
-					round.target.dodge_streak += 1
-					round.thrower.hit_streak = 0
+					round_rec.target.dodge_streak += 1
+					round_rec.thrower.hit_streak = 0
 				"Caught":
-					round.target.catch_streak += 1
-					round.thrower.hit_streak = 0
+					round_rec.target.catch_streak += 1
+					round_rec.thrower.hit_streak = 0
 
 			# Snapshot streaks
-			round.thrower_hit_streak = round.thrower.hit_streak
-			round.target_dodge_streak = round.target.dodge_streak
-			round.target_catch_streak = round.target.catch_streak
-			round.target_clutch_streak = round.target.clutch_streak
+			round_rec.thrower_hit_streak = round_rec.thrower.hit_streak
+			round_rec.target_dodge_streak = round_rec.target.dodge_streak
+			round_rec.target_catch_streak = round_rec.target.catch_streak
+			round_rec.target_clutch_streak = round_rec.target.clutch_streak
 
-			rounds.append(round)
-			var action_msg = "⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome]
+			rounds.append(round_rec)
+			var action_msg = "⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round_rec.outcome]
 			log_action(action_msg)
-			log_action("   %s" % round.commentary)
+			log_action("   %s" % round_rec.commentary)
 
 			# Reset reaction timer
 			var base_time = 6.0
@@ -292,68 +369,80 @@ func simulate_throw(p: Player, current_time: float) -> void:
 		return
 
 	var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
-	var round := MatchRound.new()
-	round.turn = turn_count
-	round.thrower = p
-	round.target = target
-	round.match_time = current_time
+	var round_rec := MatchRound.new()
+	round_rec.turn = turn_count
+	round_rec.thrower = p
+	round_rec.target = target
+	round_rec.match_time = current_time
 	p.take_ball(1)
 
+	var target_balls_before = target.ball_count
 	var result = resolve_throw(p, target, rng)
-	round.outcome = result["outcome"]
-	round.throw_power = result["throw_power"]
-	round.dodge_power = result["dodge_power"]
-	round.catch_power = result["catch_power"]
-	round.roll = result["roll"]
-	round.dodge_bonus = result.get("dodge_bonus", 0)
-	round.commentary = generate_commentary(round)
+	round_rec.outcome = result["outcome"]
+	round_rec.throw_power = result["throw_power"]
+	round_rec.dodge_power = result["dodge_power"]
+	round_rec.catch_power = result["catch_power"]
+	round_rec.roll = result["roll"]
+	round_rec.dodge_bonus = result.get("dodge_bonus", 0)
+	round_rec.commentary = generate_commentary(round_rec)
 
-	if round.outcome == "Caught":
-		var revived = revive_teammate(p)
-		round.revived_player = revived
-		round.ball_holder_after = revived if revived else target
-		if revived == null:
-			target.give_ball(1)
-	else:
-		round.ball_holder_after = target
-		target.give_ball(1)
+	match round_rec.outcome:
+		"Caught":
+			var revived = revive_teammate(target)
+			round_rec.revived_player = revived
+			round_rec.ball_holder_after = revived if revived else target
+			if revived == null:
+				target.give_ball(1)
+			var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
+			print("🧤 Caught: %s caught the ball!%s" % [target.name, revived_msg])
+		"Hit":
+			loose_balls += target_balls_before + 1
+			round_rec.ball_holder_after = null
+			target.drop_all_balls()
+		"Dodged":
+			loose_balls += 1
+			round_rec.ball_holder_after = null
+		_:
+			loose_balls += 1
+			round_rec.ball_holder_after = null
 
 	# Streak logic
-	if detect_clutch(round):
-		round.target.clutch_streak += 1
+	if detect_clutch(round_rec):
+		round_rec.target.clutch_streak += 1
 	else:
-		round.target.clutch_streak = 0
+		round_rec.target.clutch_streak = 0
+
 
 	for q in players:
-		if q != round.target and q != round.thrower:
+		if q != round_rec.target and q != round_rec.thrower:
 			q.hit_streak = 0
 			q.dodge_streak = 0
 			q.catch_streak = 0
 			q.clutch_streak = 0
 
-	match round.outcome:
+	match round_rec.outcome:
 		"Hit":
-			round.thrower.hit_streak += 1
-			round.target.hit_streak = 0
-			round.target.dodge_streak = 0
-			round.target.catch_streak = 0
+			round_rec.thrower.hit_streak += 1
+			round_rec.target.hit_streak = 0
+			round_rec.target.dodge_streak = 0
+			round_rec.target.catch_streak = 0
 		"Dodged":
-			round.target.dodge_streak += 1
-			round.thrower.hit_streak = 0
+			round_rec.target.dodge_streak += 1
+			round_rec.thrower.hit_streak = 0
 		"Caught":
-			round.target.catch_streak += 1
-			round.thrower.hit_streak = 0
+			round_rec.target.catch_streak += 1
+			round_rec.thrower.hit_streak = 0
 
 	# Snapshot streaks
-	round.thrower_hit_streak = round.thrower.hit_streak
-	round.target_dodge_streak = round.target.dodge_streak
-	round.target_catch_streak = round.target.catch_streak
-	round.target_clutch_streak = round.target.clutch_streak
+	round_rec.thrower_hit_streak = round_rec.thrower.hit_streak
+	round_rec.target_dodge_streak = round_rec.target.dodge_streak
+	round_rec.target_catch_streak = round_rec.target.catch_streak
+	round_rec.target_clutch_streak = round_rec.target.clutch_streak
 
-	rounds.append(round)
-	var action_msg = "🎯 %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round.outcome]
+	rounds.append(round_rec)
+	var action_msg = "🎯 %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round_rec.outcome]
 	log_action(action_msg)
-	log_action("   %s" % round.commentary)
+	log_action("   %s" % round_rec.commentary)
 
 func simulate_pass(p: Player, current_time: float) -> void:
 	var teammate_pool := players.filter(func(t): return t.alive and t.team == p.team and t != p)
@@ -364,14 +453,14 @@ func simulate_pass(p: Player, current_time: float) -> void:
 
 	var receiver: Player = teammate_pool[rng.randi_range(0, teammate_pool.size() - 1)]
 
-	var round := MatchRound.new()
-	round.turn = turn_count
-	round.thrower = p
-	round.target = receiver
-	round.match_time = current_time
-	round.outcome = "Pass"
-	round.commentary = "%s passed the ball to %s." % [p.name, receiver.name]
-	round.ball_holder_after = receiver
+	var round_rec := MatchRound.new()
+	round_rec.turn = turn_count
+	round_rec.thrower = p
+	round_rec.target = receiver
+	round_rec.match_time = current_time
+	round_rec.outcome = "Pass"
+	round_rec.commentary = "%s passed the ball to %s." % [p.name, receiver.name]
+	round_rec.ball_holder_after = receiver
 	p.take_ball(1)
 	receiver.give_ball(1)
 
@@ -380,41 +469,41 @@ func simulate_pass(p: Player, current_time: float) -> void:
 	var modifier = 0.5
 	receiver.reaction_timer = current_time + base_time - (receiver.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
 
-	rounds.append(round)
+	rounds.append(round_rec)
 	print("🤝 %.2f | %s passed to %s" % [current_time, p.name, receiver.name])
-	print("Commentary: %s" % round.commentary)
+	print("Commentary: %s" % round_rec.commentary)
 
 func simulate_dodge(p: Player, current_time: float) -> void:
-	var round := MatchRound.new()
-	round.turn = turn_count
-	round.thrower = p
-	round.target = p  # Self-targeted action
-	round.match_time = current_time
-	round.outcome = "Dodge"
-	round.commentary = "%s juked and rolled — just in case." % p.name
-	round.ball_holder_after = p if p.ball_count > 0 else null
+	var round_rec := MatchRound.new()
+	round_rec.turn = turn_count
+	round_rec.thrower = p
+	round_rec.target = p  # Self-targeted action
+	round_rec.match_time = current_time
+	round_rec.outcome = "Dodge"
+	round_rec.commentary = "%s juked and rolled — just in case." % p.name
+	round_rec.ball_holder_after = p if p.ball_count > 0 else null
 
 	# Optional: add streak logic
 	p.dodge_streak += 1
-	round.target_dodge_streak = p.dodge_streak
+	round_rec.target_dodge_streak = p.dodge_streak
 
-	rounds.append(round)
+	rounds.append(round_rec)
 	print("🌀 %.2f | %s dodged preemptively" % [current_time, p.name])
-	print("Commentary: %s" % round.commentary)
+	print("Commentary: %s" % round_rec.commentary)
 
 func simulate_hold(p: Player, current_time: float) -> void:
-	var round := MatchRound.new()
-	round.turn = turn_count
-	round.thrower = p
-	round.target = p  # Self-targeted action
-	round.match_time = current_time
-	round.outcome = "Hold"
-	round.commentary = "%s held the ball, waiting for the perfect moment..." % p.name
-	round.ball_holder_after = p if p.ball_count > 0 else null
+	var round_rec := MatchRound.new()
+	round_rec.turn = turn_count
+	round_rec.thrower = p
+	round_rec.target = p  # Self-targeted action
+	round_rec.match_time = current_time
+	round_rec.outcome = "Hold"
+	round_rec.commentary = "%s held the ball, waiting for the perfect moment..." % p.name
+	round_rec.ball_holder_after = p if p.ball_count > 0 else null
 
-	rounds.append(round)
+	rounds.append(round_rec)
 	print("⏳ %.2f | %s held the ball" % [current_time, p.name])
-	print("Commentary: %s" % round.commentary)
+	print("Commentary: %s" % round_rec.commentary)
 
 func simulate_taunt(p: Player, current_time: float) -> void:
 	var taunts := [
@@ -427,18 +516,18 @@ func simulate_taunt(p: Player, current_time: float) -> void:
 
 	var line = taunts[rng.randi_range(0, taunts.size() - 1)] % p.name
 
-	var round := MatchRound.new()
-	round.turn = turn_count
-	round.thrower = p
-	round.target = p
-	round.match_time = current_time
-	round.outcome = "Taunt"
-	round.commentary = line
-	round.ball_holder_after = p if p.ball_count > 0 else null
+	var round_rec := MatchRound.new()
+	round_rec.turn = turn_count
+	round_rec.thrower = p
+	round_rec.target = p
+	round_rec.match_time = current_time
+	round_rec.outcome = "Taunt"
+	round_rec.commentary = line
+	round_rec.ball_holder_after = p if p.ball_count > 0 else null
 
-	rounds.append(round)
+	rounds.append(round_rec)
 	print("💬 %.2f | %s taunted" % [current_time, p.name])
-	print("Commentary: %s" % round.commentary)
+	print("Commentary: %s" % round_rec.commentary)
 
 # 🧩 Real-Time Match Loop
 func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
@@ -462,7 +551,7 @@ func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
 	print("⏱️ Time expired — match ends in a draw.")
 	return "Draw"
 
-func generate_match_summary(rounds: Array) -> Dictionary:
+func generate_match_summary(round_log: Array) -> Dictionary:
 	var stats := {}
 	for p in players:
 		stats[p.name] = {
@@ -473,45 +562,44 @@ func generate_match_summary(rounds: Array) -> Dictionary:
 			"holds": 0,
 			"taunts": 0,
 			"clutch": 0,
-			"revives": 0,
 			"hit_streak": 0,
 			"catch_streak": 0,
 			"dodge_streak": 0,
 			"clutch_streak": 0,
-			"ball_control": 0
+			"ball_control": 0,
+			"times_eliminated": 0
 		}
 
-	for round in rounds:
-		var name = round.thrower.name
-		match round.outcome:
+	for round_rec in round_log:
+		var thrower_name = round_rec.thrower.name
+		var target_name = round_rec.target.name if round_rec.target else ""
+		match round_rec.outcome:
 			"Hit":
-				stats[name]["hits"] += 1
+				stats[thrower_name]["hits"] += 1
 			"Caught":
-				stats[round.target.name]["catches"] += 1
+				stats[target_name]["catches"] += 1
 			"Dodged":
-				stats[round.target.name]["dodge_streak"] += 1
-				stats[round.target.name]["dodges"] += 1
+				stats[target_name]["dodge_streak"] += 1
+				stats[target_name]["dodges"] += 1
 			"Pass":
-				stats[name]["passes"] += 1
+				stats[thrower_name]["passes"] += 1
 			"Hold":
-				stats[name]["holds"] += 1
+				stats[thrower_name]["holds"] += 1
 			"Taunt":
-				stats[name]["taunts"] += 1
+				stats[thrower_name]["taunts"] += 1
 			"Dodge":
-				stats[name]["dodges"] += 1
-			"Revive":
-				if round.revived_player:
-					stats[name]["revives"] += 1
+				stats[thrower_name]["dodges"] += 1
 
 		# Streak snapshots
-		stats[name]["hit_streak"] = max(stats[name]["hit_streak"], round.thrower_hit_streak)
-		stats[round.target.name]["catch_streak"] = max(stats[round.target.name]["catch_streak"], round.target_catch_streak)
-		stats[round.target.name]["dodge_streak"] = max(stats[round.target.name]["dodge_streak"], round.target_dodge_streak)
-		stats[round.target.name]["clutch_streak"] = max(stats[round.target.name]["clutch_streak"], round.target_clutch_streak)
+		stats[thrower_name]["hit_streak"] = max(stats[thrower_name]["hit_streak"], round_rec.thrower_hit_streak)
+		stats[target_name]["catch_streak"] = max(stats[target_name]["catch_streak"], round_rec.target_catch_streak)
+		stats[target_name]["dodge_streak"] = max(stats[target_name]["dodge_streak"], round_rec.target_dodge_streak)
+		stats[target_name]["clutch_streak"] = max(stats[target_name]["clutch_streak"], round_rec.target_clutch_streak)
 
-	# Peak possession (dual-ball awareness)
+	# Peak possession (dual-ball awareness) and elimination count
 	for p in players:
 		stats[p.name]["ball_control"] = max(stats[p.name]["ball_control"], p.max_ball_count)
+		stats[p.name]["times_eliminated"] = p.times_eliminated
 
 	return stats
 
@@ -519,13 +607,13 @@ func print_match_summary(summary: Dictionary) -> void:
 	print("\n📊 MATCH SUMMARY")
 	print("────────────────────────────")
 
-	for name in summary.keys():
-		var s = summary[name]
-		print("👤 %s" % name)
+	for player_name in summary.keys():
+		var s = summary[player_name]
+		print("👤 %s" % player_name)
 		print("   🎯 Hits: %d | 🧤 Catches: %d | 🌀 Dodges: %d" % [s["hits"], s["catches"], s["dodges"]])
 		print("   🤝 Passes: %d | ⏳ Holds: %d | 💬 Taunts: %d" % [s["passes"], s["holds"], s["taunts"]])
-		print("   🔁 Revives: %d | 🔥 Hit Streak: %d | 🧠 Clutch Streak: %d" % [s["revives"], s["hit_streak"], s["clutch_streak"]])
-		print("   🏐 Max Balls Held: %d" % s["ball_control"])
+		print("   🔥 Hit Streak: %d | 🧠 Clutch Streak: %d" % [s["hit_streak"], s["clutch_streak"]])
+		print("   🏐 Max Balls Held: %d | 💀 Times Eliminated: %d" % [s["ball_control"], s["times_eliminated"]])
 		print("────────────────────────────")
 
 func calculate_impact_score(stats: Dictionary) -> int:
@@ -536,7 +624,6 @@ func calculate_impact_score(stats: Dictionary) -> int:
 		stats["passes"] * 2 +
 		stats["holds"] * 1 +
 		stats["taunts"] * 1 +
-		stats["revives"] * 4 +
 		stats["hit_streak"] * 2 +
 		stats["clutch_streak"] * 3 +
 		stats.get("ball_control", 0) * 1
@@ -544,10 +631,10 @@ func calculate_impact_score(stats: Dictionary) -> int:
 
 func detect_mvp(summary: Dictionary) -> Dictionary:
 	var best := { "name": "", "score": -1 }
-	for name in summary.keys():
-		var score = calculate_impact_score(summary[name])
+	for player_name in summary.keys():
+		var score = calculate_impact_score(summary[player_name])
 		if score > best["score"]:
-			best = { "name": name, "score": score }
+			best = { "name": player_name, "score": score }
 	return best
 
 # 🧩 Reset Players Between Matches
@@ -576,12 +663,12 @@ func simulate_series():
 		print_match_summary(match_summary)
 
 		# 🧠 Accumulate into series_stats
-		for name in match_summary.keys():
-			if not series_stats.has(name):
-				series_stats[name] = match_summary[name].duplicate()
+		for player_name in match_summary.keys():
+			if not series_stats.has(player_name):
+				series_stats[player_name] = match_summary[player_name].duplicate()
 			else:
-				for key in match_summary[name].keys():
-					series_stats[name][key] += match_summary[name][key]
+				for key in match_summary[player_name].keys():
+					series_stats[player_name][key] += match_summary[player_name][key]
 
 		# 🏆 Match MVP
 		var match_mvp = detect_mvp(match_summary)
@@ -645,8 +732,7 @@ func generate_series_report(series_log: Array) -> Dictionary:
 	return report
 
 func save_report_to_json(report: Dictionary) -> String:
-	var json := JSON.new()
-	var result = json.stringify(report, "\t")  # Pretty-print with tabs
+	var result = JSON.stringify(report, "\t")  # Pretty-print with tabs
 	return result
 
 func load_report_from_json(path: String) -> Dictionary:
