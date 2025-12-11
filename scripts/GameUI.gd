@@ -6,7 +6,7 @@ var players: Array = []
 var screen_width: float = 1450
 var screen_height: float = 950
 var court_margin: float = 24
-var court_inner_pad: float = 20
+var court_inner_pad: float = 40
 var court_left: float = court_margin
 var court_right: float = screen_width - court_margin
 var court_top: float = 60  # Leave room for title
@@ -17,7 +17,7 @@ var ui_font_size: int = 14
 
 # Live console for match output
 var console_lines: Array = []
-var max_console_lines: int = 15  # Show more lines
+var max_console_lines: int = 200  # Allow scrolling through many lines
 var console_scroll: float = 0.0  # Scroll position
 
 # Player visual positions (for court display)
@@ -44,22 +44,23 @@ func _ready():
 	# Set up callback so match logs go to screen
 	match_engine.ui_callback = Callable(self, "add_console_line")
 	
-	# Initialize players
-	initialize_teams()
-	
-	# Read actual viewport and compute court + console bounds
+	# Read actual viewport and compute court + console bounds BEFORE positioning players
 	var vp_size: Vector2i = get_viewport().get_visible_rect().size
 	screen_width = float(vp_size.x)
 	screen_height = float(vp_size.y)
 	court_left = court_margin
 	court_right = screen_width - court_margin
-	# Target console height ~ 30% of screen
-	var console_target: float = max(260.0, screen_height * 0.30)
-	court_top = 60.0
-	court_bottom = max(court_top + 220.0, screen_height - console_target - 10.0)
+	# Target console height ~ 38% of screen for more room
+	var console_target: float = max(320.0, screen_height * 0.38)
+	court_top = 110.0
+	# Leave enough space for the console; clamp to avoid overlap
+	court_bottom = clamp(screen_height - console_target - 12.0, court_top + 240.0, screen_height - 140.0)
 
 	# Ensure window size matches
 	get_window().size = Vector2i(int(screen_width), int(screen_height))
+	
+	# Initialize players after bounds are set so positions land inside the court
+	initialize_teams()
 	
 	# Auto-start match after scene loads
 	await get_tree().process_frame
@@ -170,17 +171,19 @@ func _draw():
 	
 	# Console output at bottom (fill remaining space)
 	var console_x = court_left
-	var console_y_top = court_bottom + 8
+	var console_y_top = court_bottom + 50
 	var console_width = court_right - court_left
-	var console_height = max(280.0, screen_height - console_y_top - court_margin)
-	var console_content_height = console_height - 35.0
+	# Fill remaining space down to bottom; extend colored background fully without exceeding viewport
+	var console_height = max(280.0, screen_height - console_y_top - 2.0)
+	var console_content_height = console_height - 52.0
 	
 	# Background
+	# Console background (ensure it reaches bottom without clipping)
 	draw_rect(Rect2(console_x, console_y_top, console_width, console_height), Color.BLACK.lerp(Color.DARK_SLATE_GRAY, 0.5))
 	draw_rect(Rect2(console_x, console_y_top, console_width, console_height), Color.WHITE, false, 1.0)
 	
 	# Title
-	draw_string(ui_font, Vector2(console_x + 10, console_y_top + 5), "📋 Match Log", HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+	draw_string(ui_font, Vector2(console_x + 10, console_y_top + 14), "📋 Match Log", HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
 	
 	# Calculate scrollable area
 	var line_height = 16.0
@@ -197,11 +200,11 @@ func _draw():
 	
 	# Draw console lines with clipping
 	var start_line = int(console_scroll / line_height)
-	var console_y = console_y_top + 25 - int(console_scroll) % int(line_height)
+	var console_y = console_y_top + 44 - int(console_scroll) % int(line_height)
 	
 	for i in range(start_line, min(start_line + max_visible_lines + 2, console_lines.size())):
 		if i < console_lines.size() and console_y < console_y_top + console_height:
-			draw_string(ui_font, Vector2(console_x + 10, console_y), console_lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, ui_font_size)
+			draw_string(ui_font, Vector2(console_x + 12, console_y), console_lines[i], HORIZONTAL_ALIGNMENT_LEFT, console_width - 28, ui_font_size)
 			console_y += int(line_height)
 	
 	# Draw scrollbar
@@ -213,9 +216,9 @@ func _draw():
 		var scroll_thumb_pos = (console_scroll / max_scroll) * (scrollbar_height - scroll_thumb_height)
 		
 		# Scrollbar track
-		draw_rect(Rect2(scrollbar_x, console_y_top + 25, scrollbar_width, scrollbar_height), Color.DARK_GRAY)
+		draw_rect(Rect2(scrollbar_x, console_y_top + 44, scrollbar_width, scrollbar_height), Color.DARK_GRAY)
 		# Scrollbar thumb
-		draw_rect(Rect2(scrollbar_x, console_y_top + 25 + scroll_thumb_pos, scrollbar_width, scroll_thumb_height), Color.LIGHT_GRAY)
+		draw_rect(Rect2(scrollbar_x, console_y_top + 44 + scroll_thumb_pos, scrollbar_width, scroll_thumb_height), Color.LIGHT_GRAY)
 	
 	# Title & instructions
 	draw_string(ui_font, Vector2(court_left, 24), "🏐 DODGEBALL SIM - Live View (Red vs Blue)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
