@@ -39,6 +39,8 @@ var stats_title: Label = null
 var stats_mvp: Label = null
 var stats_text: Label = null
 var close_button: Button = null
+var seed_input: LineEdit = null
+var apply_seed_button: Button = null
 
 func _ready():
 	set_process(true)
@@ -141,6 +143,34 @@ func setup_stats_panel():
 	close_button.pressed.connect(_on_close_stats_panel)
 	vbox.add_child(close_button)
 
+	# Restart button
+	var restart_button = Button.new()
+	restart_button.text = "Restart Match"
+	restart_button.custom_minimum_size = Vector2(160, 40)
+	restart_button.pressed.connect(_on_restart_match)
+	vbox.add_child(restart_button)
+
+	# Seed replay controls (HBox: label + input + button)
+	var seed_hbox = HBoxContainer.new()
+	seed_hbox.custom_minimum_size = Vector2(0, 40)
+	vbox.add_child(seed_hbox)
+
+	var seed_label = Label.new()
+	seed_label.text = "Seed:"
+	seed_label.add_theme_font_size_override("font_size", 14)
+	seed_hbox.add_child(seed_label)
+
+	seed_input = LineEdit.new()
+	seed_input.placeholder_text = "Enter integer seed"
+	seed_input.custom_minimum_size = Vector2(220, 40)
+	seed_hbox.add_child(seed_input)
+
+	apply_seed_button = Button.new()
+	apply_seed_button.text = "Replay with Seed"
+	apply_seed_button.custom_minimum_size = Vector2(160, 40)
+	apply_seed_button.pressed.connect(_on_apply_seed_replay)
+	seed_hbox.add_child(apply_seed_button)
+
 func initialize_teams():
 	var red_team = []
 	var blue_team = []
@@ -198,13 +228,63 @@ func start_match():
 		print("❌ No players initialized!")
 		add_console_line("❌ Error: No players!")
 		return
-	
+
+	# Baseline team totals for Throw/Dodge/Catch
+	var red_throw = 0
+	var red_dodge = 0
+	var red_catch = 0
+	var blue_throw = 0
+	var blue_dodge = 0
+	var blue_catch = 0
+	for p in players:
+		var t = p.stats["accuracy"] + p.stats["ferocity"]
+		var d = p.stats["instinct"] + p.stats["hustle"]
+		var c = p.stats["hands"] + p.stats["backbone"]
+		if p.team == "Red":
+			red_throw += t
+			red_dodge += d
+			red_catch += c
+		else:
+			blue_throw += t
+			blue_dodge += d
+			blue_catch += c
+	add_console_line("Baseline — Red: Throw %d | Dodge %d | Catch %d" % [red_throw, red_dodge, red_catch])
+	add_console_line("Baseline — Blue: Throw %d | Dodge %d | Catch %d" % [blue_throw, blue_dodge, blue_catch])
+
+	# Prepare RNG (fixed seed if set, else time-derived)
+	match_engine.prepare_match_rng()
+	add_console_line("Seed — %d" % match_engine.match_seed)
+
 	match_engine.simulate_opening_rush(players)
 	add_console_line("Opening rush complete! Match in progress...")
 	
 	match_running = true
 	match_time = 0.0
 	accumulated_time = 0.0
+
+func _on_restart_match():
+	if stats_panel:
+		stats_panel.visible = false
+	add_console_line("🔄 Restarting match...")
+	match_engine.reset_players()
+	match_time = 0.0
+	accumulated_time = 0.0
+	start_match()
+
+func _on_apply_seed_replay():
+	if stats_panel:
+		stats_panel.visible = false
+	var seed_text = seed_input.text.strip_edges()
+	if seed_text == "":
+		add_console_line("⚠️ Please enter a numeric seed.")
+		return
+	var seed_val = int(seed_text)
+	match_engine.set_seed(seed_val)
+	add_console_line("🎲 Fixed seed set → %d" % seed_val)
+	match_engine.reset_players()
+	match_time = 0.0
+	accumulated_time = 0.0
+	start_match()
 
 func add_console_line(line: String):
 	console_lines.append(line)

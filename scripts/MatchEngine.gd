@@ -8,6 +8,8 @@ var turn_count: int = 0
 var rng := RandomNumberGenerator.new()
 var loose_balls: int = 0
 const TOTAL_BALLS: int = 6
+var use_fixed_seed: bool = false
+var match_seed: int = 0
 
 # 🧩 UI Callback for live logging
 var ui_callback: Callable = Callable()  # Will be set by GameUI
@@ -17,6 +19,23 @@ func log_action(msg: String):
 	print(msg)
 	if ui_callback.is_valid():
 		ui_callback.call(msg)
+
+# 🎲 Seeding controls
+func set_seed(seed: int) -> void:
+	use_fixed_seed = true
+	match_seed = seed
+
+func clear_seed() -> void:
+	use_fixed_seed = false
+
+func prepare_match_rng() -> void:
+	# Always set an explicit seed so we can log/replay
+	if use_fixed_seed:
+		rng.seed = match_seed
+	else:
+		match_seed = int(Time.get_unix_time_from_system())
+		rng.seed = match_seed
+	print("🎲 Match seed set: %d" % match_seed)
 
 # 🧮 Utility: keep total balls accounted for and pick up loose ones
 func give_dropped_ball(preferred_team: String):
@@ -151,8 +170,8 @@ func generate_commentary(round_rec: MatchRound) -> String:
 		"Dodged_Strategist": "%s anticipated that and sidestepped cleanly.",
 		
 		# Caught outcomes
-		"Caught_Default": "%s snatched it mid-air—%s is out.",
-		"Caught_Hothead": "%s lunged and grabbed it—classic hothead reflex.",
+		"Caught_Default": "%s snatched it mid-air—possession secured.",
+		"Caught_Hothead": "%s lunged and grabbed it—possession flips.",
 		"Caught_Ghost": "%s materialized to catch it mid-flight.",
 		"Caught_Strategist": "%s read the trajectory perfectly and caught it.",
 		
@@ -177,15 +196,67 @@ func generate_commentary(round_rec: MatchRound) -> String:
 		# Dodge (self-action) outcomes
 		"Dodge_Default": "%s dodged preemptively."
 	}
-	
+
+	var template: String = ""
 	if templates.has(key):
-		return templates[key].format([round_rec.target.name, round_rec.thrower.name])
-	
-	var fallback = "%s_Default" % round_rec.outcome
-	if templates.has(fallback):
-		return templates[fallback].format([round_rec.target.name, round_rec.thrower.name])
-	
-	return "A moment passes."
+		template = templates[key]
+	else:
+		var fallback = "%s_Default" % round_rec.outcome
+		if templates.has(fallback):
+			template = templates[fallback]
+		else:
+			return "A moment passes."
+
+	# Count placeholders safely
+	var placeholder_count = 0
+	var idx = template.find("%s")
+	while idx != -1:
+		placeholder_count += 1
+		idx = template.find("%s", idx + 2)
+	# Default names
+	var thrower_name = round_rec.thrower.name
+	var target_name = round_rec.target.name
+
+	# Build arguments based on outcome and template style
+	var args: Array = []
+	match round_rec.outcome:
+		"Dodged":
+			args = [target_name]
+		"Caught":
+			args = [target_name]
+		"Hit":
+			if key.ends_with("Hothead"):
+				# "%s got smashed—%s brought the heat!" → target, thrower
+				args = [target_name, thrower_name]
+			elif key.ends_with("Default"):
+				# "%s landed the hit—%s is out." → thrower, target
+				args = [thrower_name, target_name]
+			elif key.ends_with("Ghost"):
+				# "%s couldn't escape—caught by the phantom!" → target
+				args = [target_name]
+			elif key.ends_with("Strategist"):
+				# "%s calculated the angle and scored." → thrower
+				args = [thrower_name]
+			else:
+				# Fallback mapping: if two placeholders, use thrower,target else target
+				if placeholder_count == 2:
+					args = [thrower_name, target_name]
+				else:
+					args = [target_name]
+		_:
+			# Other outcomes (Pass, Hold, Taunt, Dodge)
+			if placeholder_count == 2:
+				args = [thrower_name, target_name]
+			else:
+				args = [thrower_name]
+
+	# Apply formatting based on placeholder count
+	if placeholder_count <= 0:
+		return template
+	elif placeholder_count == 1:
+		return template % args[0]
+	else:
+		return template % [args[0], args[1]]
 
 # 🧩 Clutch Detection
 func detect_clutch(round_rec: MatchRound) -> bool:
@@ -299,11 +370,15 @@ func simulate_reaction_queue(current_time: float) -> void:
 				"Caught":
 					var revived = revive_teammate(target)
 					round_rec.revived_player = revived
-					round_rec.ball_holder_after = revived if revived else target
-					if revived == null:
-						target.give_ball(1)
+					# Catcher always keeps the ball
+					round_rec.ball_holder_after = target
+					target.give_ball(1)
 					var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
 					log_action("   %s caught the ball!%s" % [target.name, revived_msg])
+					# Faster follow-up for catcher: reduce base time a bit
+					var base_time_catch = 4.0
+					var modifier_catch = 0.5
+					target.reaction_timer = current_time + base_time_catch - (target.stats["instinct"] * modifier_catch) + rng.randf_range(0.0, 1.0)
 				"Hit":
 					# Target is eliminated inside resolve_throw; drop carried balls + thrown ball to loose pool
 					loose_balls += target_balls_before + 1
@@ -390,11 +465,15 @@ func simulate_throw(p: Player, current_time: float) -> void:
 		"Caught":
 			var revived = revive_teammate(target)
 			round_rec.revived_player = revived
-			round_rec.ball_holder_after = revived if revived else target
-			if revived == null:
-				target.give_ball(1)
+			# Catcher always keeps the ball
+			round_rec.ball_holder_after = target
+			target.give_ball(1)
 			var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
-			print("🧤 Caught: %s caught the ball!%s" % [target.name, revived_msg])
+			log_action("   %s caught the ball!%s" % [target.name, revived_msg])
+			# Faster follow-up for catcher
+			var base_time_catch = 4.0
+			var modifier_catch = 0.5
+			target.reaction_timer = current_time + base_time_catch - (target.stats["instinct"] * modifier_catch) + rng.randf_range(0.0, 1.0)
 		"Hit":
 			loose_balls += target_balls_before + 1
 			round_rec.ball_holder_after = null
@@ -656,6 +735,7 @@ func simulate_series():
 
 	while red_wins < 2 and blue_wins < 2:
 		reset_players()
+		prepare_match_rng()
 		print("🎮 Match %d begins!" % match_number)
 		var winner = simulate_match()
 
@@ -679,7 +759,8 @@ func simulate_series():
 			"match": match_number,
 			"winner": winner,
 			"mvp": match_mvp["name"],
-			"impact": match_mvp["score"]
+			"impact": match_mvp["score"],
+			"seed": match_seed
 		})
 
 		if winner == "Red":
@@ -714,7 +795,8 @@ func generate_series_report(series_log: Array) -> Dictionary:
 			"match": entry["match"],
 			"winner": entry["winner"],
 			"mvp": entry["mvp"],
-			"impact": entry["impact"]
+			"impact": entry["impact"],
+			"seed": entry.get("seed", 0)
 		})
 
 		if entry["winner"] == "Red":
