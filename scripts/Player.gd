@@ -20,7 +20,6 @@ var commentary: Array = []
 
 func revive():
 	alive = true
-	give_ball(1)
 
 func eliminate():
 	alive = false

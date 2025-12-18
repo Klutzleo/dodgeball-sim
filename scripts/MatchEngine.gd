@@ -10,9 +10,11 @@ var loose_balls: int = 0
 const TOTAL_BALLS: int = 6
 var use_fixed_seed: bool = false
 var match_seed: int = 0
+var player_positions: Dictionary = {}
 
 # 🧩 UI Callback for live logging
 var ui_callback: Callable = Callable()  # Will be set by GameUI
+var ball_spawn_callback: Callable = Callable()  # For visual ball trajectories
 
 func log_action(msg: String):
 	"""Log action to console and UI if callback is set"""
@@ -27,6 +29,10 @@ func set_seed(seed: int) -> void:
 
 func clear_seed() -> void:
 	use_fixed_seed = false
+
+# 📍 Position sync (from GameUI)
+func set_player_position(name: String, pos: Vector2) -> void:
+	player_positions[name] = pos
 
 func prepare_match_rng() -> void:
 	# Always set an explicit seed so we can log/replay
@@ -76,23 +82,20 @@ func rebalance_balls():
 	if loose_balls <= 0:
 		return
 
-	var eligible := players.filter(func(p): return p.alive and p.ball_count < p.max_balls)
-	if eligible.is_empty():
-		return
+	while loose_balls > 0:
+		var eligible := players.filter(func(p): return p.alive and p.ball_count < p.max_balls)
+		if eligible.is_empty():
+			break
 
-	eligible.sort_custom(func(a, b):
-		var sa = a.stats["hustle"] + a.stats["instinct"]
-		var sb = b.stats["hustle"] + b.stats["instinct"]
-		return sb - sa
-	)
+		eligible.sort_custom(func(a, b):
+			var sa = a.stats["hustle"] + a.stats["instinct"]
+			var sb = b.stats["hustle"] + b.stats["instinct"]
+			return sb - sa
+		)
 
-	var idx = 0
-	while loose_balls > 0 and eligible.size() > 0:
-		var p: Player = eligible[idx % eligible.size()]
-		if p.ball_count < p.max_balls:
-			p.give_ball(1)
-			loose_balls -= 1
-		idx += 1
+		var picker: Player = eligible[0]
+		picker.give_ball(1)
+		loose_balls -= 1
 
 # 🧩 Opening Rush
 func simulate_opening_rush(player_list: Array) -> void:
@@ -128,6 +131,11 @@ func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGener
 	var dodge_bonus = 1 if target.ball_count > 0 else 0  # Ball shield bonus
 	dodge_power += dodge_bonus
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
+
+	# Cover bonus: if teammate is ahead (toward midline) in same lane band, add dodge, and add catch if they hold a ball
+	var cover_bonus = _get_cover_bonus(target)
+	dodge_power += cover_bonus.get("dodge", 0)
+	catch_power += cover_bonus.get("catch", 0)
 	var total = throw_power + dodge_power + catch_power
 	var roll = rng_local.randi_range(0, total - 1)
 
@@ -146,8 +154,45 @@ func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGener
 		"dodge_power": dodge_power,
 		"catch_power": catch_power,
 		"roll": roll,
-		"dodge_bonus": dodge_bonus
+		"dodge_bonus": dodge_bonus,
+		"cover_dodge_bonus": cover_bonus.get("dodge", 0),
+		"cover_catch_bonus": cover_bonus.get("catch", 0)
 	}
+
+func _get_cover_bonus(target: Player) -> Dictionary:
+	# Requires position sync from GameUI via set_player_position
+	if not player_positions.has(target.name):
+		return {"dodge": 0, "catch": 0}
+
+	var pos_target: Vector2 = player_positions[target.name]
+	var best_cover_dodge = 0
+	var best_cover_catch = 0
+
+	for mate in players:
+		if mate == target or not mate.alive or mate.team != target.team:
+			continue
+		if not player_positions.has(mate.name):
+			continue
+		var pos_mate: Vector2 = player_positions[mate.name]
+		var same_lane = abs(pos_mate.y - pos_target.y) < 40.0
+		if not same_lane:
+			continue
+		if target.team == "Red":
+			if pos_mate.x > pos_target.x + 8.0:
+				best_cover_dodge = 1
+				if mate.ball_count > 0:
+					best_cover_catch = 1
+		elif target.team == "Blue":
+			if pos_mate.x < pos_target.x - 8.0:
+				best_cover_dodge = 1
+				if mate.ball_count > 0:
+					best_cover_catch = 1
+
+		# Early exit if both bonuses set
+		if best_cover_dodge == 1 and best_cover_catch == 1:
+			break
+
+	return {"dodge": best_cover_dodge, "catch": best_cover_catch}
 
 # 🧩 Revival Logic
 func revive_teammate(thrower: Player) -> Player:
@@ -374,7 +419,7 @@ func simulate_reaction_queue(current_time: float) -> void:
 					round_rec.ball_holder_after = target
 					target.give_ball(1)
 					var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
-					log_action("   %s caught the ball!%s" % [target.name, revived_msg])
+					log_action("🧤 %s caught the ball!%s" % [target.name, revived_msg])
 					# Faster follow-up for catcher: reduce base time a bit
 					var base_time_catch = 4.0
 					var modifier_catch = 0.5
@@ -430,6 +475,10 @@ func simulate_reaction_queue(current_time: float) -> void:
 			var action_msg = "⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round_rec.outcome]
 			log_action(action_msg)
 			log_action("   %s" % round_rec.commentary)
+			
+			# Spawn visual ball for UI
+			if ball_spawn_callback.is_valid():
+				ball_spawn_callback.call(p.name, target.name, current_time)
 
 			# Reset reaction timer
 			var base_time = 6.0
@@ -469,7 +518,7 @@ func simulate_throw(p: Player, current_time: float) -> void:
 			round_rec.ball_holder_after = target
 			target.give_ball(1)
 			var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
-			log_action("   %s caught the ball!%s" % [target.name, revived_msg])
+			log_action("🧤 %s caught the ball!%s" % [target.name, revived_msg])
 			# Faster follow-up for catcher
 			var base_time_catch = 4.0
 			var modifier_catch = 0.5

@@ -22,6 +22,10 @@ var console_scroll: float = 0.0  # Scroll position
 
 # Player visual positions (for court display)
 var player_positions: Dictionary = {}
+var player_velocities: Dictionary = {}
+
+# Ball trajectories (cosmetic)
+var active_balls: Array = []  # [{start_pos, end_pos, start_time, duration, color}]
 
 # Real-time match state
 var match_running: bool = false
@@ -52,6 +56,9 @@ func _ready():
 	
 	# Set up callback so match logs go to screen
 	match_engine.ui_callback = Callable(self, "add_console_line")
+	
+	# Set up ball spawn callback for visual trajectories
+	match_engine.ball_spawn_callback = Callable(self, "spawn_ball")
 	
 	# Read actual viewport and compute court + console bounds BEFORE positioning players
 	var vp_size: Vector2i = get_viewport().get_visible_rect().size
@@ -216,9 +223,13 @@ func initialize_teams():
 	var y_spacing = (court_bottom - court_top - 2.0 * court_inner_pad) / 6.0
 	
 	for i in range(6):
-		player_positions[red_team[i].name] = Vector2(red_x, court_top + court_inner_pad + i * y_spacing)
+		var pos = Vector2(red_x, court_top + court_inner_pad + i * y_spacing)
+		player_positions[red_team[i].name] = pos
+		player_velocities[red_team[i].name] = Vector2.ZERO
 	for i in range(6):
-		player_positions[blue_team[i].name] = Vector2(blue_x, court_top + court_inner_pad + i * y_spacing)
+		var pos_b = Vector2(blue_x, court_top + court_inner_pad + i * y_spacing)
+		player_positions[blue_team[i].name] = pos_b
+		player_velocities[blue_team[i].name] = Vector2.ZERO
 
 func start_match():
 	var mode_str = "DEV (2-min halves)" if dev_mode else "OFFICIAL (6-min halves)"
@@ -292,6 +303,119 @@ func add_console_line(line: String):
 		console_lines.pop_front()
 	queue_redraw()
 
+func spawn_ball(thrower_name: String, target_name: String, throw_time: float) -> void:
+	var start_pos = player_positions.get(thrower_name, Vector2.ZERO)
+	var end_pos = player_positions.get(target_name, Vector2.ZERO)
+	if start_pos == Vector2.ZERO or end_pos == Vector2.ZERO:
+		print("⚠️ Ball spawn failed: invalid positions for %s → %s" % [thrower_name, target_name])
+		return
+	
+	# Flight duration: 1.0 second (increased from 0.4 for visibility across simulation steps)
+	var duration = 1.0
+	var ball_color = Color.ORANGE
+	
+	active_balls.append({
+		"start_pos": start_pos,
+		"end_pos": end_pos,
+		"start_time": throw_time,
+		"duration": duration,
+		"color": ball_color
+	})
+	print("🏐 Ball spawned: %s → %s at time %.2f (total active: %d)" % [thrower_name, target_name, throw_time, active_balls.size()])
+	queue_redraw()
+
+func _update_player_positions(delta: float) -> void:
+	var mid_x = (court_left + court_right) / 2.0
+	for p in players:
+		if not p.alive:
+			continue
+		var player_name = p.name
+		var pos: Vector2 = player_positions.get(player_name, Vector2.ZERO)
+		var vel: Vector2 = _compute_velocity(p, pos, mid_x)
+		pos += vel * delta
+
+		# Bounds per team (stay on own half, leave margin)
+		if p.team == "Red":
+			var min_x = court_left + 60.0
+			var max_x = mid_x - 40.0
+			if pos.x < min_x:
+				pos.x = min_x
+				vel.x = abs(vel.x)
+			elif pos.x > max_x:
+				pos.x = max_x
+				vel.x = -abs(vel.x)
+		else:
+			var min_x_b = mid_x + 40.0
+			var max_x_b = court_right - 60.0
+			if pos.x < min_x_b:
+				pos.x = min_x_b
+				vel.x = abs(vel.x)
+			elif pos.x > max_x_b:
+				pos.x = max_x_b
+				vel.x = -abs(vel.x)
+
+		player_positions[player_name] = pos
+		player_velocities[player_name] = vel
+		# Sync position to match engine for cover logic
+		if match_engine:
+			match_engine.set_player_position(player_name, pos)
+
+func _update_balls(_delta: float) -> void:
+	# Remove expired balls
+	var i = 0
+	while i < active_balls.size():
+		var ball = active_balls[i]
+		var elapsed = match_time - ball["start_time"]
+		if elapsed > ball["duration"]:
+			active_balls.remove_at(i)
+		else:
+			i += 1
+
+func _compute_velocity(p: Player, pos: Vector2, mid_x: float) -> Vector2:
+	var has_ball = p.ball_count > 0
+	var hustle = p.stats.get("hustle", 0)
+	var ferocity = p.stats.get("ferocity", 0)
+	var instinct = p.stats.get("instinct", 0)
+
+	var base_speed = 30.0 + 6.0 * float(hustle)
+	if has_ball:
+		if ferocity >= instinct:
+			base_speed += 4.0
+		else:
+			base_speed -= 4.0
+
+	var dir = 1.0 if p.team == "Red" else -1.0
+
+	# Bias: without ball, move toward mid; with ball, slightly back unless ferocity is high
+	var bias = 0.0
+	if not has_ball:
+		bias = 1.0
+	elif ferocity > instinct:
+		bias = 0.3
+	else:
+		bias = -0.5
+
+	# Apply bias toward or away from midline
+	var target_dir = dir * bias
+	var vx = base_speed * target_dir
+
+	# Preserve last horizontal direction to avoid getting stuck at bounds
+	var prev_vel: Vector2 = player_velocities.get(p.name, Vector2.ZERO)
+	if prev_vel.x < 0:
+		vx = -abs(vx)
+	elif prev_vel.x > 0:
+		vx = abs(vx)
+
+	# Loose-ball pursuit: if there are loose balls and capacity, nudge toward midline
+	if match_engine and match_engine.loose_balls > 0 and p.ball_count < p.max_balls:
+		var dir_to_mid = 0.0
+		if abs(mid_x - pos.x) > 1.0:
+			dir_to_mid = 1.0 if mid_x > pos.x else -1.0
+		var pursuit_vx = 20.0 * dir_to_mid
+		vx += pursuit_vx
+
+	return Vector2(vx, 0)
+
 func _draw():
 	# Court background
 	draw_rect(Rect2(court_left, court_top, court_right - court_left, court_bottom - court_top), Color.DARK_SLATE_GRAY)
@@ -323,6 +447,25 @@ func _draw():
 		# Player name/archetype label
 		var label = p.name.substr(0, 5)
 		draw_string(ui_font, pos + Vector2(-20, 25), label, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
+	
+	# Draw active balls (on top of players)
+	for ball in active_balls:
+		var t = (match_time - ball["start_time"]) / ball["duration"]
+		if t >= 0.0 and t <= 1.0:
+			# Draw trail/trace behind ball
+			var trail_segments = 8
+			for i in range(trail_segments):
+				var trail_t = max(0.0, t - (trail_segments - i) * 0.08)
+				if trail_t >= 0.0:
+					var trail_pos = ball["start_pos"].lerp(ball["end_pos"], trail_t)
+					var alpha = float(i) / float(trail_segments)  # Fade in from 0 to 1
+					var trail_color = Color(ball["color"].r, ball["color"].g, ball["color"].b, alpha * 0.6)
+					var trail_radius = 6.0 + 2.0 * alpha
+					draw_circle(trail_pos, trail_radius, trail_color)
+			
+			# Draw main ball at current position
+			var ball_pos = ball["start_pos"].lerp(ball["end_pos"], t)
+			draw_circle(ball_pos, 8.0, ball["color"])
 	
 	# Console output at bottom (fill remaining space)
 	var console_x = court_left
@@ -394,12 +537,27 @@ func _process(delta):
 	
 	if not match_running:
 		return
+
+	# Update simple lateral movement for player visuals
+	_update_player_positions(delta)
+	
+	# Update active ball trajectories
+	_update_balls(delta)
+	
+	# Redraw if balls are active
+	if active_balls.size() > 0:
+		queue_redraw()
 	
 	# Accumulate real time
 	accumulated_time += delta
 	
+	# Check time limit first
+	if match_time >= max_match_time:
+		end_match("Draw")
+		return
+	
 	# Step the simulation when enough real time has passed
-	while accumulated_time >= time_step and match_time <= max_match_time:
+	while accumulated_time >= time_step and match_time < max_match_time:
 		accumulated_time -= time_step
 		
 		# Run one step of the match
@@ -415,10 +573,11 @@ func _process(delta):
 		if alive_teams.size() < 2:
 			end_match(alive_teams.keys()[0] if alive_teams.size() > 0 else "Draw")
 			return
-	
-	# Check time limit
-	if match_time >= max_match_time:
-		end_match("Draw")
+		
+		# Check time limit immediately after incrementing
+		if match_time >= max_match_time:
+			end_match("Draw")
+			return
 	
 	queue_redraw()
 
