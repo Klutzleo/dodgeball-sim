@@ -45,6 +45,8 @@ var stats_text: Label = null
 var close_button: Button = null
 var seed_input: LineEdit = null
 var apply_seed_button: Button = null
+var pre_seed_input: LineEdit = null
+var pre_apply_seed_button: Button = null
 
 func _ready():
 	set_process(true)
@@ -77,6 +79,9 @@ func _ready():
 	
 	# Create stats overlay panel (hidden initially)
 	setup_stats_panel()
+
+	# Create pre-match seed controls (always visible)
+	setup_pre_match_seed_controls()
 	
 	# Initialize players after bounds are set so positions land inside the court
 	initialize_teams()
@@ -177,6 +182,29 @@ func setup_stats_panel():
 	apply_seed_button.custom_minimum_size = Vector2(160, 40)
 	apply_seed_button.pressed.connect(_on_apply_seed_replay)
 	seed_hbox.add_child(apply_seed_button)
+
+func setup_pre_match_seed_controls():
+	"""Top-of-screen controls to set seed and restart immediately"""
+	var hbox = HBoxContainer.new()
+	hbox.position = Vector2(court_left + 10, 62)
+	hbox.custom_minimum_size = Vector2(520, 36)
+	add_child(hbox)
+
+	var label = Label.new()
+	label.text = "Seed:"
+	label.add_theme_font_size_override("font_size", 14)
+	hbox.add_child(label)
+
+	pre_seed_input = LineEdit.new()
+	pre_seed_input.placeholder_text = "Enter integer seed"
+	pre_seed_input.custom_minimum_size = Vector2(220, 32)
+	hbox.add_child(pre_seed_input)
+
+	pre_apply_seed_button = Button.new()
+	pre_apply_seed_button.text = "Set Seed + Restart"
+	pre_apply_seed_button.custom_minimum_size = Vector2(180, 32)
+	pre_apply_seed_button.pressed.connect(_on_apply_seed_pre_match)
+	hbox.add_child(pre_apply_seed_button)
 
 func initialize_teams():
 	var red_team = []
@@ -286,6 +314,19 @@ func _on_apply_seed_replay():
 	if stats_panel:
 		stats_panel.visible = false
 	var seed_text = seed_input.text.strip_edges()
+	if seed_text == "":
+		add_console_line("⚠️ Please enter a numeric seed.")
+		return
+	var seed_val = int(seed_text)
+	match_engine.set_seed(seed_val)
+	add_console_line("🎲 Fixed seed set → %d" % seed_val)
+	match_engine.reset_players()
+	match_time = 0.0
+	accumulated_time = 0.0
+	start_match()
+
+func _on_apply_seed_pre_match():
+	var seed_text = pre_seed_input.text.strip_edges()
 	if seed_text == "":
 		add_console_line("⚠️ Please enter a numeric seed.")
 		return
@@ -605,8 +646,11 @@ func end_match(winner: String):
 	match_running = false
 	var summary = match_engine.generate_match_summary(match_engine.rounds)
 	var mvp = match_engine.detect_mvp(summary)
-	
-	add_console_line("🏁 Match Over! %s wins!" % winner)
+
+	if winner == "Draw":
+		add_console_line("🏁 Match Over! Draw.")
+	else:
+		add_console_line("🏁 Match Over! %s wins!" % winner)
 	add_console_line("🏅 MVP: %s" % mvp["name"])
 	
 	print("\n==================================================")
@@ -621,9 +665,12 @@ func show_stats_panel(winner: String, mvp: Dictionary, summary: Dictionary):
 	"""Populate and display the stats overlay"""
 	if not stats_panel:
 		return
-	
-	# Set title with winner
-	stats_title.text = "🏁 %s WINS!" % winner.to_upper()
+
+	# Set title with winner / draw
+	if winner == "Draw":
+		stats_title.text = "🏁 DRAW"
+	else:
+		stats_title.text = "🏁 %s WINS!" % winner.to_upper()
 	
 	# Set MVP
 	stats_mvp.text = "🏅 MVP: %s (Impact: %d)" % [mvp["name"], mvp["score"]]

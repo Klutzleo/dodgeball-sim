@@ -45,6 +45,7 @@ elif roll < dodge_power + catch_power: → "Caught"
 else: → "Hit" (eliminate target)
 ```
 **Ball shield bonus**: Holding ball grants +1 dodge (already implemented in `resolve_throw`). Keep consistent if adding dual-ball bonuses.
+**Positional cover bonus**: If a teammate is ahead in the same lane band (within ~40px vertically and slightly forward toward midline), target gains +1 dodge; if that covering teammate holds a ball, target also gains +1 catch. Powered by GameUI positional sync and `_get_cover_bonus()`.
 
 ### Opening Rush
 `simulate_opening_rush` ranks players by `hustle + ferocity + rng`, top 6 grab balls, seeds initial `reaction_timer`. Changing ball/player counts? Update this + UI assumptions.
@@ -55,8 +56,7 @@ else: → "Hit" (eliminate target)
 - **Strategist**: Favors pass (4), hold (3), throw (2)
 - **Ghost**: Favors dodge (5), taunt (2)
 - **Default**: Balanced chaos
-
-**Adding new actions**: Must implement simulator (`simulate_X`), log into `MatchRound`, count in `generate_match_summary`, weight in `calculate_impact_score`.
+- **Streak modifiers**: Hit/catch/dodge/clutch streaks ≥2 boost corresponding actions.
 
 ### Streak System
 Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_streak`) live on `Player`:
@@ -96,6 +96,8 @@ Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_strea
 - **Court display**: Red left, Blue right; shows player circles (dimmed if eliminated), ball indicators.
 - **Match log**: Scrollable console at bottom, auto-scrolls unless user scrolling. Wheel events captured by scrolling UI only.
 - **Stats panel**: Overlay showing team summary (hits, catches, dodges, passes, players remaining), individual player breakdown, MVP info. Scrollable if content exceeds height.
+- **Seed replay controls**: Input + button to set a fixed seed and replay deterministically from the stats overlay.
+- **Dev/official halves**: Dev mode uses ~2-minute halves; official uses ~6-minute halves.
 
 ## Key Files
 - `scripts/MatchEngine.gd`: All match/series logic, simulators, summaries, MVP, JSON persistence
@@ -109,6 +111,31 @@ Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_strea
 - **Revive ordering**: First eliminated teammate returns (stable ordering). Document if changing priority.
 - **Ball pickups (design hooks)**: `attempt_ball_pickup(player, zone)` supports safe/contested/exposed zones with instinct/hustle rolls. Not yet integrated into main loop.
 - **JSON persistence**: `save_report_to_json` pretty-prints with tabs; `load_report_from_json` uses Godot `FileAccess`. Extend report shape cautiously, keep loader tolerant.
+
+### Action Integration (Live)
+`simulate_reaction_queue` now calls `choose_action(player)` to dispatch all actions (throw/pass/hold/taunt/dodge) in real time with safe fallbacks:
+- **Dispatch logic**: Actions route to `simulate_throw`, `simulate_pass`, `simulate_hold`, `simulate_taunt`, `simulate_dodge` with guards (e.g., no-ball throw → dodge, no teammate pass → hold).
+- **Timing**: Each action resets the player's `reaction_timer` using the same base formula. Catchers get a faster follow-up (4.0 base vs 6.0).
+- **Non-ball holders**: Opening rush now seeds `reaction_timer` for players who missed the ball grab, so non-throwing actions (pass, hold, taunt, dodge) happen naturally without stalling.
+- **Logging**: Pass/hold/taunt/dodge route through `log_action()` so they appear in the on-screen match log.
+- **Ball visuals**: Throws still spawn ball trajectories via `ball_spawn_callback` for UI.
+- **Delay rebalance**: `rebalance_balls()` runs only on idle ticks (no actions fired), preventing same-tick ball pickup after throws/eliminations.
+
+### Ball Management (Side-Aware)
+Loose balls are now tracked per team (`loose_balls_red`, `loose_balls_blue`) with rare bounce chance:
+- **Drop origin**: Hits/dodges/misses add loose balls to the target's side (where the action occurred).
+- **Bounce chance**: Tiny 5% chance for a ball to bounce cross-court; 8% for legacy `give_dropped_ball()` calls.
+- **Rebalance scope**: Distributes Red-side loose balls only to Red players with capacity; Blue-side to Blue. Missing-ball backfill splits evenly.
+- **Total tracking**: `loose_balls` still aggregates both pools for UI/backward compatibility.
+- **No same-tick pickup**: Loose balls cannot be redistributed in the same tick they're created; must wait for next idle tick.
+
+### Pre-Match Seed Controls
+`GameUI.gd` now exposes seed input at top of screen (always visible):
+- **Set Seed + Restart button**: Enables fast iteration on match flow without opening the stats overlay; sets seed and immediately restarts.
+- **Post-match replay**: Stats overlay also has seed input + "Replay with Seed" for deterministic debugging.
+
+### Draw Display
+Match-end UI now displays "Draw" instead of "Draw wins!" when time expires.
 
 ## Style
 - Concise GDScript, emoji for log clarity (`🎯`, `🤝`, `🌀`, `⏳`, `💬`)
@@ -124,12 +151,26 @@ Per-player counters (`hit_streak`, `dodge_streak`, `catch_streak`, `clutch_strea
 
 ## Before Making Changes
 If modifying ball shield bonus, dual-ball defense, drop bias, catch/revive logic, or core resolution math—**flag it first**. These systems cascade through `resolve_throw`, `choose_action`, summaries, and MVP scoring. When adding networked features, ensure all game logic remains deterministic and state changes are logged as `MatchRound` events.
+If altering positional cover: update `_get_cover_bonus()` logic and ensure UI position sync via `set_player_position()` remains deterministic across clients.
 
-## Recent Updates (December 2025)
-- **UI Polish**: Added GameUI with live court visualization, scrollable match log console, and stats overlay panel.
-- **Ball Accounting**: Implemented `loose_balls` tracking and `rebalance_balls()` to prevent stalls when balls disappear.
-- **Drop Bias**: Dropped balls favor same team (~92%), with rare cross-court turnovers (~8%).
-- **Catch Revive Fix**: Fixed bug where catches were reviving the thrower's team instead of the catcher's team.
-- **Stats Clarity**: Removed redundant "Revives" stat (subsumed by catches). Added "Times Eliminated" tracking and "Players Remaining" display.
-- **Match Log**: Catches now log who was revived, e.g., `"Caught: Red3 caught the ball! ↩️ Red6 revived!"` or `"(No one to revive!)"`.
-- **Code Quality**: Full lint cleanup (no shadowed variables, proper static calls, clear variable naming).
+## Recent Updates (December 18, 2025)
+- **Action Integration**: `choose_action()` now wired into `simulate_reaction_queue()` for live dispatch of throws/passes/holds/taunts/dodges with safe fallbacks.
+- **Side-Aware Ball Drops**: Loose balls tracked per team; stay on their side with rare bounce chance (5%). Only redistributed on idle ticks to prevent same-tick pickups.
+- **Pre-Match Seed UI**: Added always-visible seed input at top to set seed and restart match immediately.
+- **Non-Ball Holder Timers**: Opening rush now seeds reaction timers for players without balls, enabling pass/hold/taunt/dodge actions to happen naturally.
+- **Draw Display**: Match-end text now shows "Draw" instead of "Draw wins!" on timeout.
+- **Cover Bonuses Logged**: `cover_dodge_bonus` and `cover_catch_bonus` added to `MatchRound` for post-match analytics.
+- **Dual-Ball Defense Toggle**: Optional `DUAL_BALL_DEFENSE_ENABLED` (default false) adds +1 dodge when target holds 2 balls; kept within Stats Contract.
+
+## Roadmap (Q1 2026)
+- **Log cover bonuses in analytics**: Thread `cover_dodge_bonus` and `cover_catch_bonus` into match summaries or a future analytics panel.
+- **Visual ball persistence**: Spawn loose ball sprites on court that track side and removal on pickup.
+- **Network sync hooks**: Prototype Firebase/Supabase event sync using `MatchRound` as the authoritative stream; keep RNG seeded.
+- **Balance knobs UI**: Add in-app sliders/toggles for base times, modifiers, and archetype weights (dev-only).
+- **Dual-ball tuning**: Decide on final defensive bonus when holding 2 balls; A/B test with seed replays before flipping default to true.
+
+## Contribution Workflow
+- **Run and verify**: Launch [Main.tscn](../Main.tscn), observe console and stats overlay.
+- **Document changes**: For any change to resolution math, ball management, streaks, or UI, update this file in the relevant section.
+- **Cross-check**: Ensure updates reflect `resolve_throw`, `_get_cover_bonus`, `simulate_reaction_queue`, `generate_match_summary`, and `calculate_impact_score`.
+- **Determinism**: Confirm reproducibility with a fixed seed using the stats overlay seed controls when introducing new features.

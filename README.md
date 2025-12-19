@@ -1,23 +1,34 @@
 # Dodgeball Sim
 
-A chaotic, multiplayer dodgeball game built in [Godot Engine](https://godotengine.org), featuring modular character archetypes, expressive match recaps, and cross-platform play (desktop, web, mobile).
+A chaotic, multiplayer dodgeball sim built in [Godot Engine](https://godotengine.org), featuring archetype-driven AI, real-time action resolution, and narrative match recaps. Designed for cross-platform play (desktop, web, mobile).
 
 ## 🎮 Features
 
-- Modular match engine with narratable outcomes
-- Archetype-driven character traits and quirks
-- Aseprite-powered sprite animation pipeline
-- Sync-ready for web and mobile platforms
-- GitHub-integrated version control for clean iteration
+- Deterministic, seeded match engine with narratable outcomes
+- Archetype-driven actions and streak system (hits/dodges/catches/clutch)
+- Real-time reaction queue (not turn-based)
+- Live match log console + end-of-match stats overlay
+- Planned Firebase/Supabase sync using authoritative `MatchRound` logs
 
-## 🚀 Getting Started
+## 🚀 Quick Start (Godot 4.5)
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/yourusername/dodgeball-sim.git
+   git clone https://github.com/Klutzleo/dodgeball-sim.git
    ```
-2. Open the project in Godot (standard version)
-3. Run `Main.tscn` to launch the prototype scene
+2. Open the project in Godot 4.5 and load the project file.
+3. Run the main scene [Main.tscn](Main.tscn).
+4. Watch the bottom console for emoji-prefixed logs and the stats overlay at match end.
+
+Windows CLI (optional):
+```powershell
+# From the repo root
+godot4.exe --path .
+```
+
+Deterministic replay:
+- At match end, use the seed input in the stats overlay to enter an integer.
+- Click "Replay with Seed" to rerun the match deterministically.
 
 ## 🧱 Project Structure
 
@@ -25,24 +36,36 @@ A chaotic, multiplayer dodgeball game built in [Godot Engine](https://godotengin
 dodgeball-sim/
 ├── scenes/
 ├── scripts/
+│   ├── GameUI.gd
+│   ├── MatchEngine.gd
+│   ├── MatchRound.gd
+│   └── Player.gd
 ├── assets/
 │   ├── sprites/
 │   └── audio/
-├── .gitignore
+├── Main.tscn
+├── project.godot
 ├── README.md
 └── LICENSE
 ```
 
-## 📦 Dependencies
+## 📦 Requirements
 
-- [Godot Engine (standard)](https://godotengine.org/download)
-- [Aseprite](https://www.aseprite.org) for sprite creation
-- Optional: Firebase/Supabase for multiplayer sync
+- Godot Engine 4.5
+- Optional: Aseprite for sprites
+- Optional: Firebase/Supabase for multiplayer sync (planned)
 
 ## 🧠 Vision
 
-This project explores chaotic, personality-driven gameplay with emergent storytelling. Every match is a narrative. Every character is a vibe. And every recap is a moment worth laughing at.
+Chaotic, personality-driven gameplay with emergent storytelling. Each match is a narrative; archetypes and streaks shape the drama. The sim doubles as a deterministic backend for future online play.
+
+## 🛠️ Troubleshooting
+
+- No logs or UI? Make sure you run [Main.tscn](Main.tscn) (it wires `GameUI` to `MatchEngine`).
+- Window too small/large? The scene auto-sizes to the viewport; adjust the editor window and rerun.
+- Determinism checks: Use the seed controls in the stats overlay; re-enter the same seed to reproduce outcomes.
+- Balls stalling? `rebalance_balls()` prevents deadlocks by redistributing `loose_balls` to eligible players.
 
 ## 📜 License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+MIT License. See [LICENSE](LICENSE).

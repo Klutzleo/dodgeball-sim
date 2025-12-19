@@ -6,8 +6,11 @@ var players: Array = []
 var rounds: Array = []
 var turn_count: int = 0
 var rng := RandomNumberGenerator.new()
-var loose_balls: int = 0
+var loose_balls: int = 0  # total (for UI/backward compatibility)
+var loose_balls_red: int = 0
+var loose_balls_blue: int = 0
 const TOTAL_BALLS: int = 6
+const DUAL_BALL_DEFENSE_ENABLED: bool = false
 var use_fixed_seed: bool = false
 var match_seed: int = 0
 var player_positions: Dictionary = {}
@@ -68,8 +71,8 @@ func give_dropped_ball(preferred_team: String):
 		picker.give_ball(1)
 		return
 
-	# No one can take it right now; track as loose for later rebalance
-	loose_balls += 1
+	# No one can take it right now; track as loose on the preferred side (with small bounce chance)
+	_add_loose_balls(preferred_team, 1, 0.08)
 
 func rebalance_balls():
 	var on_players = 0
@@ -77,25 +80,54 @@ func rebalance_balls():
 		on_players += p.ball_count
 	var missing = TOTAL_BALLS - (on_players + loose_balls)
 	if missing > 0:
-		loose_balls += missing
+		# Split missing balls evenly to both sides (favor Red if odd)
+		var half = missing / 2
+		var extra = missing % 2
+		_add_loose_balls("Red", half + extra)
+		_add_loose_balls("Blue", half)
 
 	if loose_balls <= 0:
 		return
 
-	while loose_balls > 0:
-		var eligible := players.filter(func(p): return p.alive and p.ball_count < p.max_balls)
-		if eligible.is_empty():
-			break
+	# Distribute side-specific loose balls only to that side's eligible players
+	loose_balls_red = _rebalance_side("Red", loose_balls_red)
+	loose_balls_blue = _rebalance_side("Blue", loose_balls_blue)
+	loose_balls = loose_balls_red + loose_balls_blue
 
+func _add_loose_balls(team: String, count: int, bounce_chance: float = 0.0) -> void:
+	if count <= 0:
+		return
+	var target_team = team
+	if bounce_chance > 0.0 and rng.randf() < bounce_chance:
+		target_team = "Red" if team == "Blue" else "Blue"
+	if target_team == "Red":
+		loose_balls_red += count
+	elif target_team == "Blue":
+		loose_balls_blue += count
+	loose_balls = max(loose_balls_red, 0) + max(loose_balls_blue, 0)
+
+func _rebalance_side(team: String, pool: int) -> int:
+	if pool <= 0:
+		return pool
+	var eligible := players.filter(func(p): return p.alive and p.team == team and p.ball_count < p.max_balls)
+	if eligible.is_empty():
+		return pool
+
+	var remaining = pool
+	while remaining > 0 and not eligible.is_empty():
 		eligible.sort_custom(func(a, b):
 			var sa = a.stats["hustle"] + a.stats["instinct"]
 			var sb = b.stats["hustle"] + b.stats["instinct"]
 			return sb - sa
 		)
-
 		var picker: Player = eligible[0]
 		picker.give_ball(1)
-		loose_balls -= 1
+		remaining -= 1
+		# Remove picker if full after receiving
+		if picker.ball_count >= picker.max_balls:
+			eligible.remove_at(0)
+
+	return remaining
 
 # 🧩 Opening Rush
 func simulate_opening_rush(player_list: Array) -> void:
@@ -104,6 +136,8 @@ func simulate_opening_rush(player_list: Array) -> void:
 	for p in player_list:
 		p.drop_all_balls()
 	loose_balls = 0
+	loose_balls_red = 0
+	loose_balls_blue = 0
 
 	for p in player_list:
 		var score = p.stats["hustle"] + p.stats["ferocity"] + rng.randi_range(0, 5)
@@ -123,6 +157,11 @@ func simulate_opening_rush(player_list: Array) -> void:
 			p.reaction_timer = reaction_time
 		else:
 			p.commentary.append("😬 Missed the ball scramble.")
+			# Seed initial reaction timer for non-ball holders so they act later
+			var base_time_miss = 7.0
+			var modifier_miss = 0.5
+			var reaction_time_miss = base_time_miss - (p.stats["instinct"] * modifier_miss) + rng.randf_range(0.5, 1.5)
+			p.reaction_timer = reaction_time_miss
 
 # 🧩 Throw Resolution
 func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGenerator) -> Dictionary:
@@ -130,6 +169,10 @@ func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGener
 	var dodge_power = target.stats["instinct"] + target.stats["hustle"]
 	var dodge_bonus = 1 if target.ball_count > 0 else 0  # Ball shield bonus
 	dodge_power += dodge_bonus
+	# Optional dual-ball defense (off by default)
+	if DUAL_BALL_DEFENSE_ENABLED and target.ball_count >= 2:
+		# Modest extra dodge bonus when holding 2 balls; keep Stats Contract
+		dodge_power += 1
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
 
 	# Cover bonus: if teammate is ahead (toward midline) in same lane band, add dodge, and add catch if they hold a ball
@@ -382,108 +425,48 @@ func choose_action(player: Player) -> String:
 
 # 🧩 Real-Time Reaction Queue
 func simulate_reaction_queue(current_time: float) -> void:
-	rebalance_balls()
+	var any_action = false
 
 	for p in players:
-		if not p.alive or p.ball_count == 0:
+		if not p.alive:
 			continue
 
 		if p.reaction_timer <= current_time:
-			var target_pool := players.filter(func(t): return t.alive and t.team != p.team)
-			if target_pool.size() == 0:
-				continue
+			var action = choose_action(p)
 
-			var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
-			var round_rec := MatchRound.new()
-			round_rec.turn = turn_count
-			round_rec.thrower = p
-			round_rec.target = target
-			round_rec.match_time = current_time
-			p.take_ball(1)  # Spend one ball on this throw
+			# Safeguards / fallbacks
+			if action == "throw" and p.ball_count == 0:
+				action = "dodge"
+			if action == "pass":
+				var teammate_pool := players.filter(func(t): return t.alive and t.team == p.team and t != p)
+				if p.ball_count == 0 or teammate_pool.size() == 0:
+					action = "hold"
 
-			var target_balls_before = target.ball_count
-			var result = resolve_throw(p, target, rng)
-			round_rec.outcome = result["outcome"]
-			round_rec.throw_power = result["throw_power"]
-			round_rec.dodge_power = result["dodge_power"]
-			round_rec.catch_power = result["catch_power"]
-			round_rec.roll = result["roll"]
-			round_rec.dodge_bonus = result.get("dodge_bonus", 0)
-			round_rec.commentary = generate_commentary(round_rec)
-
-			match round_rec.outcome:
-				"Caught":
-					var revived = revive_teammate(target)
-					round_rec.revived_player = revived
-					# Catcher always keeps the ball
-					round_rec.ball_holder_after = target
-					target.give_ball(1)
-					var revived_msg = " ↩️ %s revived!" % revived.name if revived else " (No one to revive!)"
-					log_action("🧤 %s caught the ball!%s" % [target.name, revived_msg])
-					# Faster follow-up for catcher: reduce base time a bit
-					var base_time_catch = 4.0
-					var modifier_catch = 0.5
-					target.reaction_timer = current_time + base_time_catch - (target.stats["instinct"] * modifier_catch) + rng.randf_range(0.0, 1.0)
-				"Hit":
-					# Target is eliminated inside resolve_throw; drop carried balls + thrown ball to loose pool
-					loose_balls += target_balls_before + 1
-					round_rec.ball_holder_after = null
-					# Ensure target has no balls
-					target.drop_all_balls()
-				"Dodged":
-					# Missed throw becomes a loose ball
-					loose_balls += 1
-					round_rec.ball_holder_after = null
+			match action:
+				"throw":
+					simulate_throw(p, current_time)
+				"pass":
+					simulate_pass(p, current_time)
+				"hold":
+					simulate_hold(p, current_time)
+				"taunt":
+					simulate_taunt(p, current_time)
+				"dodge":
+					simulate_dodge(p, current_time)
 				_:
-					# Default: drop to loose
-					loose_balls += 1
-					round_rec.ball_holder_after = null
+					# Default to hold to keep pacing
+					simulate_hold(p, current_time)
 
-			# Streak logic
-			if detect_clutch(round_rec):
-				round_rec.target.clutch_streak += 1
-			else:
-				round_rec.target.clutch_streak = 0
+			any_action = true
 
-			for q in players:
-				if q != round_rec.target and q != round_rec.thrower:
-					q.hit_streak = 0
-					q.dodge_streak = 0
-					q.catch_streak = 0
-					q.clutch_streak = 0
-
-			match round_rec.outcome:
-				"Hit":
-					round_rec.thrower.hit_streak += 1
-					round_rec.target.hit_streak = 0
-					round_rec.target.dodge_streak = 0
-					round_rec.target.catch_streak = 0
-				"Dodged":
-					round_rec.target.dodge_streak += 1
-					round_rec.thrower.hit_streak = 0
-				"Caught":
-					round_rec.target.catch_streak += 1
-					round_rec.thrower.hit_streak = 0
-
-			# Snapshot streaks
-			round_rec.thrower_hit_streak = round_rec.thrower.hit_streak
-			round_rec.target_dodge_streak = round_rec.target.dodge_streak
-			round_rec.target_catch_streak = round_rec.target.catch_streak
-			round_rec.target_clutch_streak = round_rec.target.clutch_streak
-
-			rounds.append(round_rec)
-			var action_msg = "⏱️ %.2f | %s throws at %s → %s" % [current_time, p.name, target.name, round_rec.outcome]
-			log_action(action_msg)
-			log_action("   %s" % round_rec.commentary)
-			
-			# Spawn visual ball for UI
-			if ball_spawn_callback.is_valid():
-				ball_spawn_callback.call(p.name, target.name, current_time)
-
-			# Reset reaction timer
+			# Reset reaction timer for actor after any action
 			var base_time = 6.0
 			var modifier = 0.5
 			p.reaction_timer = current_time + base_time - (p.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
+
+	# Delay rebalance so loose balls from actions aren't redistributed in the same tick
+	if not any_action:
+		rebalance_balls()
 
 func simulate_throw(p: Player, current_time: float) -> void:
 	var target_pool := players.filter(func(t): return t.alive and t.team != p.team)
@@ -508,6 +491,8 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	round_rec.catch_power = result["catch_power"]
 	round_rec.roll = result["roll"]
 	round_rec.dodge_bonus = result.get("dodge_bonus", 0)
+	round_rec.cover_dodge_bonus = result.get("cover_dodge_bonus", 0)
+	round_rec.cover_catch_bonus = result.get("cover_catch_bonus", 0)
 	round_rec.commentary = generate_commentary(round_rec)
 
 	match round_rec.outcome:
@@ -524,14 +509,16 @@ func simulate_throw(p: Player, current_time: float) -> void:
 			var modifier_catch = 0.5
 			target.reaction_timer = current_time + base_time_catch - (target.stats["instinct"] * modifier_catch) + rng.randf_range(0.0, 1.0)
 		"Hit":
-			loose_balls += target_balls_before + 1
+			# Thrown ball + any held by target drop on target side; tiny bounce chance
+			_add_loose_balls(target.team, target_balls_before + 1, 0.05)
 			round_rec.ball_holder_after = null
 			target.drop_all_balls()
 		"Dodged":
-			loose_balls += 1
+			# Missed throw becomes a loose ball on target side; tiny bounce chance
+			_add_loose_balls(target.team, 1, 0.05)
 			round_rec.ball_holder_after = null
 		_:
-			loose_balls += 1
+			_add_loose_balls(target.team, 1, 0.05)
 			round_rec.ball_holder_after = null
 
 	# Streak logic
@@ -572,6 +559,10 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	log_action(action_msg)
 	log_action("   %s" % round_rec.commentary)
 
+	# Spawn visual ball for UI
+	if ball_spawn_callback.is_valid():
+		ball_spawn_callback.call(p.name, target.name, current_time)
+
 func simulate_pass(p: Player, current_time: float) -> void:
 	var teammate_pool := players.filter(func(t): return t.alive and t.team == p.team and t != p)
 	if teammate_pool.size() == 0:
@@ -598,8 +589,9 @@ func simulate_pass(p: Player, current_time: float) -> void:
 	receiver.reaction_timer = current_time + base_time - (receiver.stats["instinct"] * modifier) + rng.randf_range(0.0, 1.0)
 
 	rounds.append(round_rec)
-	print("🤝 %.2f | %s passed to %s" % [current_time, p.name, receiver.name])
-	print("Commentary: %s" % round_rec.commentary)
+	var msg = "🤝 %.2f | %s passed to %s" % [current_time, p.name, receiver.name]
+	log_action(msg)
+	log_action("   %s" % round_rec.commentary)
 
 func simulate_dodge(p: Player, current_time: float) -> void:
 	var round_rec := MatchRound.new()
@@ -616,8 +608,9 @@ func simulate_dodge(p: Player, current_time: float) -> void:
 	round_rec.target_dodge_streak = p.dodge_streak
 
 	rounds.append(round_rec)
-	print("🌀 %.2f | %s dodged preemptively" % [current_time, p.name])
-	print("Commentary: %s" % round_rec.commentary)
+	var msg_dodge = "🌀 %.2f | %s dodged preemptively" % [current_time, p.name]
+	log_action(msg_dodge)
+	log_action("   %s" % round_rec.commentary)
 
 func simulate_hold(p: Player, current_time: float) -> void:
 	var round_rec := MatchRound.new()
@@ -630,8 +623,9 @@ func simulate_hold(p: Player, current_time: float) -> void:
 	round_rec.ball_holder_after = p if p.ball_count > 0 else null
 
 	rounds.append(round_rec)
-	print("⏳ %.2f | %s held the ball" % [current_time, p.name])
-	print("Commentary: %s" % round_rec.commentary)
+	var msg_hold = "⏳ %.2f | %s held the ball" % [current_time, p.name]
+	log_action(msg_hold)
+	log_action("   %s" % round_rec.commentary)
 
 func simulate_taunt(p: Player, current_time: float) -> void:
 	var taunts := [
@@ -654,8 +648,9 @@ func simulate_taunt(p: Player, current_time: float) -> void:
 	round_rec.ball_holder_after = p if p.ball_count > 0 else null
 
 	rounds.append(round_rec)
-	print("💬 %.2f | %s taunted" % [current_time, p.name])
-	print("Commentary: %s" % round_rec.commentary)
+	var msg_taunt = "💬 %.2f | %s taunted" % [current_time, p.name]
+	log_action(msg_taunt)
+	log_action("   %s" % round_rec.commentary)
 
 # 🧩 Real-Time Match Loop
 func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
@@ -774,6 +769,9 @@ func reset_players():
 
 	rounds.clear()
 	turn_count = 0
+	loose_balls = 0
+	loose_balls_red = 0
+	loose_balls_blue = 0
 
 func simulate_series():
 	var red_wins = 0
