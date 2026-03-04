@@ -442,8 +442,8 @@ func _update_player_positions(delta: float) -> void:
 		var pos: Vector2 = player_positions.get(player_name, Vector2.ZERO)
 
 		if not p.alive:
-			# Eliminated: drift toward sideline (off to the side of their half)
-			var bench_x = court_left - 18.0 if p.team == "Red" else court_right + 18.0
+			# Eliminated: drift to the outer strip of their half (stays on-screen)
+			var bench_x = court_left + 18.0 if p.team == "Red" else court_right - 18.0
 			pos = pos.lerp(Vector2(bench_x, pos.y), delta * 2.0)
 			player_positions[player_name] = pos
 			continue
@@ -500,20 +500,21 @@ func _compute_velocity(p: Player, pos: Vector2, mid_x: float) -> Vector2:
 	var base_speed = 28.0 + 7.0 * float(hustle)
 
 	# ── X axis ───────────────────────────────────────────────────────────────
-	var bias_x: float
-	if not has_ball:
-		bias_x = 0.8          # drift toward midline to chase balls
-	elif ferocity > instinct:
-		bias_x = 0.4          # aggressive: press forward with ball
-	else:
-		bias_x = -0.3         # cautious: hold back
-	var vx = base_speed * dir * bias_x
-
-	# Loose-ball sprint: charge hard toward midline when carrying capacity open
-	if match_engine and match_engine.loose_balls > 0 and p.ball_count < p.max_balls:
+	# Default: patrol own half — drift back from the line.
+	# Forward pressure only comes from loose balls or holding a ball to throw.
+	var loose_balls = match_engine.loose_balls if match_engine else 0
+	var vx: float
+	if has_ball:
+		# Press toward mid to throw; ferocious types commit harder
+		var forward_bias = 0.5 if ferocity > instinct else 0.15
+		vx = base_speed * dir * forward_bias
+	elif loose_balls > 0 and p.ball_count < p.max_balls:
+		# Loose balls on court — sprint toward midline to grab one
 		var dx = mid_x - pos.x
-		if abs(dx) > 1.0:
-			vx += 40.0 * sign(dx)
+		vx = base_speed * sign(dx) * 1.1
+	else:
+		# No ball, nothing to chase — drift back to patrol own zone
+		vx = base_speed * dir * -0.35
 
 	# ── Y axis ───────────────────────────────────────────────────────────────
 	# Spring toward home row (soft anchor so players don't drift permanently)
@@ -559,16 +560,17 @@ func _draw():
 			radius = 6.0
 		
 		draw_circle(pos, radius, color)
-		
+
 		# Ball indicator (small white circle on player)
 		if p.ball_count > 0:
 			draw_circle(pos + Vector2(15, -15), 5.0, Color.WHITE)
 			if p.ball_count > 1:
 				draw_string(ui_font, pos + Vector2(10, -25), "x%d" % p.ball_count, HORIZONTAL_ALIGNMENT_LEFT, -1, ui_font_size)
-		
-		# Player name/archetype label
-		var label = p.name.substr(0, 5)
-		draw_string(ui_font, pos + Vector2(-20, 25), label, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
+
+		# Name label — above player when eliminated (avoids sideline clipping), below when alive
+		var label_offset = Vector2(-20, -20) if not p.alive else Vector2(-20, 18)
+		var label_color = Color(1, 1, 1, 0.5) if not p.alive else Color.WHITE
+		draw_string(ui_font, pos + label_offset, p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, label_color)
 	
 	# Pre-match: draw 6 balls lined up on the midline
 	if match_phase == "pre_match":
