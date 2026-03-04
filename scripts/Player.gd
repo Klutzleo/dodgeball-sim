@@ -1,4 +1,5 @@
 class_name Player
+# v2 — training_ceiling is a per-stat Dictionary, not int
 
 var name: String
 var team: String
