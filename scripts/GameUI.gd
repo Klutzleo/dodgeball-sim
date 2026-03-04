@@ -50,6 +50,10 @@ var apply_seed_button: Button = null
 var pre_seed_input: LineEdit = null
 var pre_apply_seed_button: Button = null
 
+# Training Room panel
+var training_panel: Panel = null
+var training_scroll_vbox: VBoxContainer = null
+
 func _ready():
 	set_process(true)
 	ui_font = ThemeDB.fallback_font
@@ -81,6 +85,9 @@ func _ready():
 	
 	# Create stats overlay panel (hidden initially)
 	setup_stats_panel()
+
+	# Create training room panel (hidden initially)
+	setup_training_panel()
 
 	# Create pre-match seed controls (always visible)
 	setup_pre_match_seed_controls()
@@ -163,6 +170,13 @@ func setup_stats_panel():
 	restart_button.custom_minimum_size = Vector2(160, 40)
 	restart_button.pressed.connect(_on_restart_match)
 	vbox.add_child(restart_button)
+
+	# Training Room button
+	var training_button = Button.new()
+	training_button.text = "Training Room 💦"
+	training_button.custom_minimum_size = Vector2(160, 40)
+	training_button.pressed.connect(_on_open_training_room)
+	vbox.add_child(training_button)
 
 	# Seed replay controls (HBox: label + input + button)
 	var seed_hbox = HBoxContainer.new()
@@ -747,8 +761,117 @@ func show_stats_panel(winner: String, mvp: Dictionary, summary: Dictionary):
 	stats_panel.visible = true
 
 func _on_close_stats_panel():
-	"""Hide stats panel and optionally restart match"""
 	if stats_panel:
 		stats_panel.visible = false
-	# Optional: restart match automatically
-	# get_tree().reload_current_scene()
+
+# ─── Training Room ────────────────────────────────────────────────────────────
+
+func setup_training_panel():
+	training_panel = Panel.new()
+	training_panel.position = Vector2(screen_width / 2 - 380, 40)
+	training_panel.size = Vector2(760, screen_height - 80)
+	training_panel.visible = false
+	add_child(training_panel)
+
+	var outer = VBoxContainer.new()
+	outer.position = Vector2(16, 16)
+	outer.size = Vector2(728, training_panel.size.y - 32)
+	training_panel.add_child(outer)
+
+	# Header
+	var title = Label.new()
+	title.text = "💦 Training Room"
+	title.add_theme_font_size_override("font_size", 22)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	outer.add_child(title)
+
+	var subtitle = Label.new()
+	subtitle.text = "Spend Sweat to raise a stat toward its ceiling. Cost = 5 × current value."
+	subtitle.add_theme_font_size_override("font_size", 12)
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	outer.add_child(subtitle)
+
+	var spacer = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 8)
+	outer.add_child(spacer)
+
+	# Scrollable player rows
+	var scroll = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(728, training_panel.size.y - 120)
+	outer.add_child(scroll)
+
+	training_scroll_vbox = VBoxContainer.new()
+	training_scroll_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(training_scroll_vbox)
+
+	# Close button
+	var spacer2 = Control.new()
+	spacer2.custom_minimum_size = Vector2(0, 8)
+	outer.add_child(spacer2)
+
+	var close_btn = Button.new()
+	close_btn.text = "Close Training Room"
+	close_btn.custom_minimum_size = Vector2(200, 36)
+	close_btn.pressed.connect(_on_close_training_panel)
+	outer.add_child(close_btn)
+
+func _on_open_training_room():
+	if stats_panel:
+		stats_panel.visible = false
+	_rebuild_training_rows()
+	training_panel.visible = true
+
+func _on_close_training_panel():
+	training_panel.visible = false
+	if stats_panel:
+		stats_panel.visible = true
+
+# Clears and repopulates all player rows. Called on open and after each train action.
+func _rebuild_training_rows():
+	for child in training_scroll_vbox.get_children():
+		child.queue_free()
+
+	var stat_keys = ["accuracy", "ferocity", "instinct", "hustle", "hands", "backbone"]
+	var stat_labels = ["ACC", "FER", "INS", "HUS", "HAN", "BAC"]
+
+	for p in players:
+		# Player header row
+		var header = Label.new()
+		header.text = "%s  [%s]   💦 Sweat: %d" % [p.name, p.archetype, p.sweat]
+		header.add_theme_font_size_override("font_size", 14)
+		training_scroll_vbox.add_child(header)
+
+		# Stat buttons row
+		var hbox = HBoxContainer.new()
+		hbox.custom_minimum_size = Vector2(0, 38)
+		training_scroll_vbox.add_child(hbox)
+
+		for i in range(stat_keys.size()):
+			var stat = stat_keys[i]
+			var current: int = p.stats[stat]
+			var ceiling: int = p.training_ceiling.get(stat, 7)
+			var cost: int = p.train_cost(stat)
+			var at_cap: bool = current >= ceiling
+			var can_afford: bool = p.sweat >= cost and not at_cap
+
+			var btn = Button.new()
+			if at_cap:
+				btn.text = "%s: %d/MAX" % [stat_labels[i], current]
+			else:
+				btn.text = "%s: %d/%d\n(cost %d)" % [stat_labels[i], current, ceiling, cost]
+			btn.custom_minimum_size = Vector2(108, 36)
+			btn.disabled = not can_afford
+
+			# Capture p and stat for the lambda
+			var captured_player = p
+			var captured_stat = stat
+			btn.pressed.connect(func():
+				captured_player.train_stat(captured_stat)
+				_rebuild_training_rows()
+			)
+			hbox.add_child(btn)
+
+		# Divider
+		var sep = HSeparator.new()
+		training_scroll_vbox.add_child(sep)
