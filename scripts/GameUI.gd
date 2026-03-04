@@ -25,6 +25,9 @@ var console_scroll: float = 0.0  # Scroll position
 # Player visual positions (for court display)
 var player_positions: Dictionary = {}
 var player_velocities: Dictionary = {}
+var player_home_y: Dictionary = {}     # spawn-row Y, used as a soft anchor
+var match_phase: String = "pre_match"  # "pre_match" | "in_progress" | "finished"
+var pre_match_timer: float = 0.0       # counts up during opening rush visual
 
 # Ball trajectories (cosmetic)
 var active_balls: Array = []  # [{start_pos, end_pos, start_time, duration, color}]
@@ -100,8 +103,10 @@ func _ready():
 	initialize_teams()
 	load_players()
 
-	# Auto-start match after scene loads
-	await get_tree().process_frame
+	# Pre-match opening rush visual: 1.5s with balls on midline, players sprinting in
+	match_phase = "pre_match"
+	pre_match_timer = 0.0
+	await get_tree().create_timer(1.5).timeout
 	start_match()
 
 func setup_stats_panel():
@@ -261,19 +266,27 @@ func initialize_teams():
 	players = red_team + blue_team
 	match_engine.players = players
 	
-	# Calculate static court positions (Red left, Blue right)
-	var red_x = court_left + 100
-	var blue_x = court_right - 100
+	# Place players at their back wall for the pre-match rush visual.
+	# Home Y anchors their row for spreading logic during the match.
+	var red_x_start = court_left + 20.0   # back wall
+	var blue_x_start = court_right - 20.0
+	var mid_x = (court_left + court_right) / 2.0
+	var red_x_play = mid_x - 120.0        # normal play position
+	var blue_x_play = mid_x + 120.0
 	var y_spacing = (court_bottom - court_top - 2.0 * court_inner_pad) / 6.0
-	
+
 	for i in range(6):
-		var pos = Vector2(red_x, court_top + court_inner_pad + i * y_spacing)
-		player_positions[red_team[i].name] = pos
+		var home_y = court_top + court_inner_pad + i * y_spacing
+		player_home_y[red_team[i].name] = home_y
+		player_positions[red_team[i].name] = Vector2(red_x_start, home_y)
 		player_velocities[red_team[i].name] = Vector2.ZERO
 	for i in range(6):
-		var pos_b = Vector2(blue_x, court_top + court_inner_pad + i * y_spacing)
-		player_positions[blue_team[i].name] = pos_b
+		var home_y = court_top + court_inner_pad + i * y_spacing
+		player_home_y[blue_team[i].name] = home_y
+		player_positions[blue_team[i].name] = Vector2(blue_x_start, home_y)
 		player_velocities[blue_team[i].name] = Vector2.ZERO
+	# Suppress unused variable warning — used in future play-position clamping
+	var _unused = red_x_play + blue_x_play
 
 # Applies archetype stat bonuses, skill, and max_balls to a freshly created player.
 # Base roll is 3 + randi(0,1) giving 3-4, then archetype bonus applied and clamped 1-7.
@@ -342,6 +355,7 @@ func start_match():
 	add_console_line("Opening rush complete! Match in progress...")
 	
 	match_running = true
+	match_phase = "in_progress"
 	match_time = 0.0
 	accumulated_time = 0.0
 
@@ -354,6 +368,19 @@ func _restart_match(seed_val: int = -1) -> void:
 	match_engine.reset_players()
 	match_time = 0.0
 	accumulated_time = 0.0
+	# Reset players to back wall for opening rush visual
+	var mid_x = (court_left + court_right) / 2.0
+	for p in players:
+		var home_y = player_home_y.get(p.name, (court_top + court_bottom) / 2.0)
+		if p.team == "Red":
+			player_positions[p.name] = Vector2(court_left + 20.0, home_y)
+		else:
+			player_positions[p.name] = Vector2(court_right - 20.0, home_y)
+		player_velocities[p.name] = Vector2.ZERO
+	match_phase = "pre_match"
+	pre_match_timer = 0.0
+	var _unused = mid_x
+	await get_tree().create_timer(1.5).timeout
 	start_match()
 
 func _on_restart_match():
@@ -398,102 +425,118 @@ func spawn_ball(thrower_name: String, target_name: String, throw_time: float) ->
 		"end_pos": end_pos,
 		"start_time": throw_time,
 		"duration": duration,
-		"color": ball_color
+		"color": ball_color,
+		"target": target_name,   # used for evasion logic
+		"landed": false          # set true after arrival; fades out briefly
 	})
 	print("🏐 Ball spawned: %s → %s at time %.2f (total active: %d)" % [thrower_name, target_name, throw_time, active_balls.size()])
 	queue_redraw()
 
 func _update_player_positions(delta: float) -> void:
 	var mid_x = (court_left + court_right) / 2.0
+	var court_y_min = court_top + court_inner_pad
+	var court_y_max = court_bottom - court_inner_pad
+
 	for p in players:
-		if not p.alive:
-			continue
 		var player_name = p.name
 		var pos: Vector2 = player_positions.get(player_name, Vector2.ZERO)
+
+		if not p.alive:
+			# Eliminated: drift toward sideline (off to the side of their half)
+			var bench_x = court_left - 18.0 if p.team == "Red" else court_right + 18.0
+			pos = pos.lerp(Vector2(bench_x, pos.y), delta * 2.0)
+			player_positions[player_name] = pos
+			continue
+
+		if match_phase == "pre_match":
+			# Sprint toward midline at full speed for opening rush visual
+			var target_x = mid_x - 80.0 if p.team == "Red" else mid_x + 80.0
+			var rush_speed = 180.0 + 8.0 * float(p.stats.get("hustle", 3))
+			var dx = target_x - pos.x
+			pos.x += sign(dx) * min(abs(dx), rush_speed * delta)
+			player_positions[player_name] = pos
+			continue
+
 		var vel: Vector2 = _compute_velocity(p, pos, mid_x)
 		pos += vel * delta
 
-		# Bounds per team (stay on own half, leave margin)
+		# X bounds: stay on own half
 		if p.team == "Red":
-			var min_x = court_left + 60.0
-			var max_x = mid_x - 40.0
-			if pos.x < min_x:
-				pos.x = min_x
-				vel.x = abs(vel.x)
-			elif pos.x > max_x:
-				pos.x = max_x
-				vel.x = -abs(vel.x)
+			pos.x = clamp(pos.x, court_left + 36.0, mid_x - 30.0)
 		else:
-			var min_x_b = mid_x + 40.0
-			var max_x_b = court_right - 60.0
-			if pos.x < min_x_b:
-				pos.x = min_x_b
-				vel.x = abs(vel.x)
-			elif pos.x > max_x_b:
-				pos.x = max_x_b
-				vel.x = -abs(vel.x)
+			pos.x = clamp(pos.x, mid_x + 30.0, court_right - 36.0)
+
+		# Y bounds: stay within court vertically
+		pos.y = clamp(pos.y, court_y_min, court_y_max)
 
 		player_positions[player_name] = pos
 		player_velocities[player_name] = vel
-		# Sync position to match engine for cover logic
 		if match_engine:
 			match_engine.set_player_position(player_name, pos)
 
+const BALL_FADE_DURATION = 0.4  # seconds the ball lingers at target before vanishing
+
 func _update_balls(_delta: float) -> void:
-	# Remove expired balls
 	var i = 0
 	while i < active_balls.size():
 		var ball = active_balls[i]
 		var elapsed = match_time - ball["start_time"]
-		if elapsed > ball["duration"]:
+		if elapsed >= ball["duration"] and not ball["landed"]:
+			ball["landed"] = true
+			ball["land_time"] = match_time
+		if ball["landed"] and (match_time - ball.get("land_time", match_time)) > BALL_FADE_DURATION:
 			active_balls.remove_at(i)
 		else:
 			i += 1
 
 func _compute_velocity(p: Player, pos: Vector2, mid_x: float) -> Vector2:
 	var has_ball = p.ball_count > 0
-	var hustle = p.stats.get("hustle", 0)
-	var ferocity = p.stats.get("ferocity", 0)
-	var instinct = p.stats.get("instinct", 0)
+	var hustle    = p.stats.get("hustle", 0)
+	var ferocity  = p.stats.get("ferocity", 0)
+	var instinct  = p.stats.get("instinct", 0)
+	var home_y    = player_home_y.get(p.name, pos.y)
+	var dir       = 1.0 if p.team == "Red" else -1.0
 
-	var base_speed = 30.0 + 6.0 * float(hustle)
-	if has_ball:
-		if ferocity >= instinct:
-			base_speed += 4.0
-		else:
-			base_speed -= 4.0
+	var base_speed = 28.0 + 7.0 * float(hustle)
 
-	var dir = 1.0 if p.team == "Red" else -1.0
-
-	# Bias: without ball, move toward mid; with ball, slightly back unless ferocity is high
-	var bias = 0.0
+	# ── X axis ───────────────────────────────────────────────────────────────
+	var bias_x: float
 	if not has_ball:
-		bias = 1.0
+		bias_x = 0.8          # drift toward midline to chase balls
 	elif ferocity > instinct:
-		bias = 0.3
+		bias_x = 0.4          # aggressive: press forward with ball
 	else:
-		bias = -0.5
+		bias_x = -0.3         # cautious: hold back
+	var vx = base_speed * dir * bias_x
 
-	# Apply bias toward or away from midline
-	var target_dir = dir * bias
-	var vx = base_speed * target_dir
-
-	# Preserve last horizontal direction to avoid getting stuck at bounds
-	var prev_vel: Vector2 = player_velocities.get(p.name, Vector2.ZERO)
-	if prev_vel.x < 0:
-		vx = -abs(vx)
-	elif prev_vel.x > 0:
-		vx = abs(vx)
-
-	# Loose-ball pursuit: if there are loose balls and capacity, nudge toward midline
+	# Loose-ball sprint: charge hard toward midline when carrying capacity open
 	if match_engine and match_engine.loose_balls > 0 and p.ball_count < p.max_balls:
-		var dir_to_mid = 0.0
-		if abs(mid_x - pos.x) > 1.0:
-			dir_to_mid = 1.0 if mid_x > pos.x else -1.0
-		var pursuit_vx = 20.0 * dir_to_mid
-		vx += pursuit_vx
+		var dx = mid_x - pos.x
+		if abs(dx) > 1.0:
+			vx += 40.0 * sign(dx)
 
-	return Vector2(vx, 0)
+	# ── Y axis ───────────────────────────────────────────────────────────────
+	# Spring toward home row (soft anchor so players don't drift permanently)
+	var vy = (home_y - pos.y) * 1.8
+
+	# Evasion: if an in-flight ball is heading at this player, dodge perpendicular
+	var dodge_speed = 18.0 + 5.0 * float(instinct)
+	for ball in active_balls:
+		if ball.get("target", "") == p.name and not ball.get("landed", false):
+			# Dodge away from home_y — alternate direction each hit for variety
+			var dodge_dir = 1.0 if fmod(float(p.times_targeted), 2.0) == 0 else -1.0
+			vy += dodge_speed * dodge_dir * 3.0
+
+	# Teammate spreading: push apart players on the same team stacked in Y
+	for other in players:
+		if other.name == p.name or other.team != p.team or not other.alive:
+			continue
+		var other_y = player_positions.get(other.name, Vector2.ZERO).y
+		var dy = pos.y - other_y
+		if abs(dy) < 40.0 and abs(dy) > 0.5:
+			vy += sign(dy) * (40.0 - abs(dy)) * 1.2
+
+	return Vector2(vx, vy)
 
 func _draw():
 	# Court background
@@ -527,22 +570,42 @@ func _draw():
 		var label = p.name.substr(0, 5)
 		draw_string(ui_font, pos + Vector2(-20, 25), label, HORIZONTAL_ALIGNMENT_CENTER, -1, 10)
 	
+	# Pre-match: draw 6 balls lined up on the midline
+	if match_phase == "pre_match":
+		var ball_y_start = court_top + court_inner_pad + (court_bottom - court_top - 2.0 * court_inner_pad) / 12.0
+		var ball_y_step  = (court_bottom - court_top - 2.0 * court_inner_pad) / 6.0
+		for i in range(6):
+			var ball_pos = Vector2(mid_x, ball_y_start + i * ball_y_step)
+			draw_circle(ball_pos, 9.0, Color.ORANGE)
+			draw_circle(ball_pos, 9.0, Color.WHITE, false, 1.5)
+
+	# In-progress: show loose ball count as small dots near midline
+	if match_phase == "in_progress" and match_engine:
+		var loose = match_engine.loose_balls
+		for i in range(loose):
+			var dot_y = court_top + court_inner_pad + i * 18.0 + 9.0
+			draw_circle(Vector2(mid_x, dot_y), 5.0, Color(1.0, 0.65, 0.0, 0.55))
+
 	# Draw active balls (on top of players)
 	for ball in active_balls:
-		var t = (match_time - ball["start_time"]) / ball["duration"]
-		if t >= 0.0 and t <= 1.0:
-			# Draw trail/trace behind ball
+		var elapsed = match_time - ball["start_time"]
+		if ball.get("landed", false):
+			# Fade out at landing position
+			var fade = 1.0 - clamp((match_time - ball.get("land_time", match_time)) / BALL_FADE_DURATION, 0.0, 1.0)
+			if fade > 0.0:
+				var c = Color(ball["color"].r, ball["color"].g, ball["color"].b, fade * 0.6)
+				draw_circle(ball["end_pos"], 8.0 * fade, c)
+		else:
+			var t = clamp(elapsed / ball["duration"], 0.0, 1.0)
+			# Trail
 			var trail_segments = 8
 			for i in range(trail_segments):
 				var trail_t = max(0.0, t - (trail_segments - i) * 0.08)
-				if trail_t >= 0.0:
-					var trail_pos = ball["start_pos"].lerp(ball["end_pos"], trail_t)
-					var alpha = float(i) / float(trail_segments)  # Fade in from 0 to 1
-					var trail_color = Color(ball["color"].r, ball["color"].g, ball["color"].b, alpha * 0.6)
-					var trail_radius = 6.0 + 2.0 * alpha
-					draw_circle(trail_pos, trail_radius, trail_color)
-			
-			# Draw main ball at current position
+				var trail_pos = ball["start_pos"].lerp(ball["end_pos"], trail_t)
+				var alpha = float(i) / float(trail_segments) * 0.6
+				var trail_color = Color(ball["color"].r, ball["color"].g, ball["color"].b, alpha)
+				draw_circle(trail_pos, 5.0 + 2.0 * float(i) / float(trail_segments), trail_color)
+			# Main ball
 			var ball_pos = ball["start_pos"].lerp(ball["end_pos"], t)
 			draw_circle(ball_pos, 8.0, ball["color"])
 	
@@ -614,6 +677,13 @@ func _process(delta):
 			user_scrolling = false
 			scroll_idle_time = 0.0
 	
+	# During pre-match, animate players sprinting to midline and redraw
+	if match_phase == "pre_match":
+		pre_match_timer += delta
+		_update_player_positions(delta)
+		queue_redraw()
+		return
+
 	if not match_running:
 		return
 
@@ -682,6 +752,7 @@ func _input(event):
 
 func end_match(winner: String):
 	match_running = false
+	match_phase = "finished"
 	var summary = match_engine.generate_match_summary(match_engine.rounds)
 	match_engine.award_match_sweat(summary, winner)
 	var mvp = match_engine.detect_mvp(summary)
