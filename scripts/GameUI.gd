@@ -442,9 +442,18 @@ func _update_player_positions(delta: float) -> void:
 		var pos: Vector2 = player_positions.get(player_name, Vector2.ZERO)
 
 		if not p.alive:
-			# Eliminated: drift to the outer strip of their half (stays on-screen)
-			var bench_x = court_left + 18.0 if p.team == "Red" else court_right - 18.0
-			pos = pos.lerp(Vector2(bench_x, pos.y), delta * 2.0)
+			# Eliminated: drift to the bench row below the court.
+			# Red sits left half, Blue right half. Index from name suffix ("Red3" → 2).
+			var bench_y = court_bottom + 22.0
+			var idx = int(p.name.substr(p.name.length() - 1)) - 1
+			var half_w = (mid_x - court_left) - 40.0
+			var spacing = half_w / 5.0
+			var bench_x: float
+			if p.team == "Red":
+				bench_x = court_left + 20.0 + idx * spacing
+			else:
+				bench_x = mid_x + 20.0 + idx * spacing
+			pos = pos.lerp(Vector2(bench_x, bench_y), delta * 3.0)
 			player_positions[player_name] = pos
 			continue
 
@@ -543,7 +552,11 @@ func _draw():
 	# Court background
 	draw_rect(Rect2(court_left, court_top, court_right - court_left, court_bottom - court_top), Color.DARK_SLATE_GRAY)
 	draw_rect(Rect2(court_left, court_top, court_right - court_left, court_bottom - court_top), Color.WHITE, false, 2.0)
-	
+
+	# Bench strip below court
+	var bench_y = court_bottom + 8.0
+	draw_string(ui_font, Vector2(court_left, bench_y + 10), "OUT:", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.4))
+
 	# Midcourt line
 	var mid_x = (court_left + court_right) / 2.0
 	draw_line(Vector2(mid_x, court_top), Vector2(mid_x, court_bottom), Color.WHITE, 1.0)
@@ -561,8 +574,8 @@ func _draw():
 		
 		draw_circle(pos, radius, color)
 
-		# Ball indicator (small white circle on player)
-		if p.ball_count > 0:
+		# Ball indicator (only shown on alive players)
+		if p.ball_count > 0 and p.alive:
 			draw_circle(pos + Vector2(15, -15), 5.0, Color.WHITE)
 			if p.ball_count > 1:
 				draw_string(ui_font, pos + Vector2(10, -25), "x%d" % p.ball_count, HORIZONTAL_ALIGNMENT_LEFT, -1, ui_font_size)
