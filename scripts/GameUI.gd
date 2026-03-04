@@ -301,42 +301,33 @@ func start_match():
 	match_time = 0.0
 	accumulated_time = 0.0
 
-func _on_restart_match():
+func _restart_match(seed_val: int = -1) -> void:
 	if stats_panel:
 		stats_panel.visible = false
-	add_console_line("🔄 Restarting match...")
+	if seed_val >= 0:
+		match_engine.set_seed(seed_val)
+		add_console_line("🎲 Fixed seed set → %d" % seed_val)
 	match_engine.reset_players()
 	match_time = 0.0
 	accumulated_time = 0.0
 	start_match()
 
+func _on_restart_match():
+	_restart_match()
+
 func _on_apply_seed_replay():
-	if stats_panel:
-		stats_panel.visible = false
 	var seed_text = seed_input.text.strip_edges()
 	if seed_text == "":
 		add_console_line("⚠️ Please enter a numeric seed.")
 		return
-	var seed_val = int(seed_text)
-	match_engine.set_seed(seed_val)
-	add_console_line("🎲 Fixed seed set → %d" % seed_val)
-	match_engine.reset_players()
-	match_time = 0.0
-	accumulated_time = 0.0
-	start_match()
+	_restart_match(int(seed_text))
 
 func _on_apply_seed_pre_match():
 	var seed_text = pre_seed_input.text.strip_edges()
 	if seed_text == "":
 		add_console_line("⚠️ Please enter a numeric seed.")
 		return
-	var seed_val = int(seed_text)
-	match_engine.set_seed(seed_val)
-	add_console_line("🎲 Fixed seed set → %d" % seed_val)
-	match_engine.reset_players()
-	match_time = 0.0
-	accumulated_time = 0.0
-	start_match()
+	_restart_match(int(seed_text))
 
 func add_console_line(line: String):
 	console_lines.append(line)

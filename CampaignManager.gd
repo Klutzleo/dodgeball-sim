@@ -1,59 +1,74 @@
 extends Node
 class_name CampaignManager
 
-var campaigns := {}
+# Tracks season-level data across multiple matches and series.
+# Player profiles accumulate stats over time and persist across matches.
 
-func create_campaign(name: String) -> void:
-	campaigns[name] = {
-		"start_date": Time.get_datetime_string_from_unix_time(Time.get_unix_time_from_system()),
-		"teams": {},
-		"series": [],
-		"player_profiles": {}
+var season_number: int = 1
+var teams: Dictionary = {}         # team_name → { players: Array, wins: int, losses: int }
+var player_profiles: Dictionary = {}  # player_name → profile dict
+var match_results: Array = []      # Log of every completed match this season
+
+# Register a team for this season
+func register_team(team_name: String, players: Array) -> void:
+	teams[team_name] = {
+		"players": players,
+		"wins": 0,
+		"losses": 0,
+		"draws": 0
 	}
 
-func add_team_to_campaign(campaign_name: String, team_name: String, players: Array) -> void:
-	if campaigns.has(campaign_name):
-		campaigns[campaign_name]["teams"][team_name] = {
-			"players": players,
-			"fame": 0,
-			"mvp_count": 0
-	}
+# Call this after each match completes with the match summary from MatchEngine
+func record_match(winner: String, match_summary: Dictionary, match_seed: int) -> void:
+	# Log the result
+	match_results.append({
+		"season": season_number,
+		"winner": winner,
+		"seed": match_seed
+	})
 
-func add_series_to_campaign(campaign_name: String, series_log: Array, series_report: Dictionary) -> void:
-	if campaigns.has(campaign_name):
-		campaigns[campaign_name]["series"].append({
-			"log": series_log,
-			"report": series_report
-		})
+	# Update team win/loss record
+	for team_name in teams.keys():
+		if winner == team_name:
+			teams[team_name]["wins"] += 1
+		elif winner == "Draw":
+			teams[team_name]["draws"] += 1
+		else:
+			teams[team_name]["losses"] += 1
 
-		# 🔹 Update player profiles
-		for name in series_report.keys():
-			ensure_player_profile(campaign_name, name)
-			var profile = campaigns[campaign_name]["player_profiles"][name]
-			var stats = series_report[name]
+	# Accumulate per-player stats into profiles
+	for player_name in match_summary.keys():
+		_ensure_profile(player_name)
+		var profile = player_profiles[player_name]
+		var s = match_summary[player_name]
+		profile["total_hits"] += s.get("hits", 0)
+		profile["total_catches"] += s.get("catches", 0)
+		profile["total_dodges"] += s.get("dodges", 0)
+		profile["total_passes"] += s.get("passes", 0)
+		profile["matches_played"] += 1
+		profile["peak_hit_streak"] = max(profile["peak_hit_streak"], s.get("hit_streak", 0))
+		profile["peak_clutch_streak"] = max(profile["peak_clutch_streak"], s.get("clutch_streak", 0))
 
-			profile["total_hits"] += stats["hits"]
-			profile["total_catches"] += stats["catches"]
-			profile["total_dodges"] += stats["dodges"]
-			profile["total_revives"] += stats["revives"]
-			profile["clutch_streaks"].append(stats["clutch_streak"])
-			profile["hit_streaks"].append(stats["hit_streak"])
+# Bump MVP fame after a match — call with the name from detect_mvp()
+func award_mvp(player_name: String) -> void:
+	_ensure_profile(player_name)
+	player_profiles[player_name]["mvp_count"] += 1
+	player_profiles[player_name]["fame"] += 5
 
-		# 🔹 MVP Fame Boost
-		var mvp_name = series_report["mvp"]
-		ensure_player_profile(campaign_name, mvp_name)
-		campaigns[campaign_name]["player_profiles"][mvp_name]["total_mvp"] += 1
-		campaigns[campaign_name]["player_profiles"][mvp_name]["fame"] += 5
+func get_profile(player_name: String) -> Dictionary:
+	_ensure_profile(player_name)
+	return player_profiles[player_name]
 
-func ensure_player_profile(campaign_name: String, player_name: String) -> void:
-	if not campaigns[campaign_name]["player_profiles"].has(player_name):
-		campaigns[campaign_name]["player_profiles"][player_name] = {
-			"total_mvp": 0,
+func _ensure_profile(player_name: String) -> void:
+	if not player_profiles.has(player_name):
+		player_profiles[player_name] = {
+			"matches_played": 0,
 			"total_hits": 0,
 			"total_catches": 0,
 			"total_dodges": 0,
-			"total_revives": 0,
-			"clutch_streaks": [],
-			"hit_streaks": [],
+			"total_passes": 0,
+			"peak_hit_streak": 0,
+			"peak_clutch_streak": 0,
+			"mvp_count": 0,
 			"fame": 0
-	}
+		}

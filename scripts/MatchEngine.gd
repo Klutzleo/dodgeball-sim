@@ -522,18 +522,12 @@ func simulate_throw(p: Player, current_time: float) -> void:
 			round_rec.ball_holder_after = null
 
 	# Streak logic
-	if detect_clutch(round_rec):
+	round_rec.was_clutch = detect_clutch(round_rec)
+	if round_rec.was_clutch:
 		round_rec.target.clutch_streak += 1
 	else:
 		round_rec.target.clutch_streak = 0
 
-
-	for q in players:
-		if q != round_rec.target and q != round_rec.thrower:
-			q.hit_streak = 0
-			q.dodge_streak = 0
-			q.catch_streak = 0
-			q.clutch_streak = 0
 
 	match round_rec.outcome:
 		"Hit":
@@ -652,28 +646,6 @@ func simulate_taunt(p: Player, current_time: float) -> void:
 	log_action(msg_taunt)
 	log_action("   %s" % round_rec.commentary)
 
-# 🧩 Real-Time Match Loop
-func simulate_match(max_time: float = 360.0, step: float = 1.0) -> String:
-	var current_time := 0.0
-
-	while current_time <= max_time:
-		simulate_reaction_queue(current_time)
-
-		var alive_teams := {}
-		for p in players:
-			if p.alive:
-				alive_teams[p.team] = true
-
-		if alive_teams.size() < 2:
-			var winner = alive_teams.keys()[0]
-			print("🏁 Match ends at %.2f seconds — %s wins!" % [current_time, winner])
-			return winner
-
-		current_time += step
-
-	print("⏱️ Time expired — match ends in a draw.")
-	return "Draw"
-
 func generate_match_summary(round_log: Array) -> Dictionary:
 	var stats := {}
 	for p in players:
@@ -772,61 +744,6 @@ func reset_players():
 	loose_balls = 0
 	loose_balls_red = 0
 	loose_balls_blue = 0
-
-func simulate_series():
-	var red_wins = 0
-	var blue_wins = 0
-	var match_number = 1
-	var series_stats := {}
-	var series_log := []
-
-	while red_wins < 2 and blue_wins < 2:
-		reset_players()
-		prepare_match_rng()
-		print("🎮 Match %d begins!" % match_number)
-		var winner = simulate_match()
-
-		var match_summary = generate_match_summary(rounds)
-		print_match_summary(match_summary)
-
-		# 🧠 Accumulate into series_stats
-		for player_name in match_summary.keys():
-			if not series_stats.has(player_name):
-				series_stats[player_name] = match_summary[player_name].duplicate()
-			else:
-				for key in match_summary[player_name].keys():
-					series_stats[player_name][key] += match_summary[player_name][key]
-
-		# 🏆 Match MVP
-		var match_mvp = detect_mvp(match_summary)
-		print("🏅 Match %d MVP: %s with %d impact" % [match_number, match_mvp["name"], match_mvp["score"]])
-
-		# 🗂️ Log this match
-		series_log.append({
-			"match": match_number,
-			"winner": winner,
-			"mvp": match_mvp["name"],
-			"impact": match_mvp["score"],
-			"seed": match_seed
-		})
-
-		if winner == "Red":
-			red_wins += 1
-		elif winner == "Blue":
-			blue_wins += 1
-		else:
-			print("⚠️ Unexpected result: %s" % winner)
-
-		match_number += 1
-
-	# 🏆 Series MVP
-	var series_mvp = detect_mvp(series_stats)
-	print("\n🏆 SERIES MVP: %s with %d impact" % [series_mvp["name"], series_mvp["score"]])
-
-	# 📊 Series Log Recap
-	print("\n📘 SERIES LOG")
-	for entry in series_log:
-		print("Match %d → Winner: %s | MVP: %s (%d impact)" % [entry["match"], entry["winner"], entry["mvp"], entry["impact"]])
 
 func generate_series_report(series_log: Array) -> Dictionary:
 	var report := {
