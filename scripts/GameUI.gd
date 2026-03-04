@@ -103,10 +103,11 @@ func _ready():
 	initialize_teams()
 	load_players()
 
-	# Pre-match opening rush visual: 1.5s with balls on midline, players sprinting in
+	# Pre-match opening rush visual: players sprint from back wall to centerline.
+	# 3s gives even hustle-1 players time to nearly reach the balls.
 	match_phase = "pre_match"
 	pre_match_timer = 0.0
-	await get_tree().create_timer(1.5).timeout
+	await get_tree().create_timer(3.0).timeout
 	start_match()
 
 func setup_stats_panel():
@@ -380,7 +381,7 @@ func _restart_match(seed_val: int = -1) -> void:
 	match_phase = "pre_match"
 	pre_match_timer = 0.0
 	var _unused = mid_x
-	await get_tree().create_timer(1.5).timeout
+	await get_tree().create_timer(3.0).timeout
 	start_match()
 
 func _on_restart_match():
@@ -458,8 +459,8 @@ func _update_player_positions(delta: float) -> void:
 			continue
 
 		if match_phase == "pre_match":
-			# Sprint toward midline at full speed for opening rush visual
-			var target_x = mid_x - 80.0 if p.team == "Red" else mid_x + 80.0
+			# Sprint all the way to the centerline — fast players arrive first
+			var target_x = mid_x - 4.0 if p.team == "Red" else mid_x + 4.0
 			var rush_speed = 180.0 + 8.0 * float(p.stats.get("hustle", 3))
 			var dx = target_x - pos.x
 			pos.x += sign(dx) * min(abs(dx), rush_speed * delta)
