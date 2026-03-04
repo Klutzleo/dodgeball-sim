@@ -1,6 +1,8 @@
 extends Node2D
 class_name GameUI
 
+const Archetypes = preload("res://scripts/Archetypes.gd")
+
 var match_engine: MatchEngine
 var players: Array = []
 var screen_width: float = 1450
@@ -209,37 +211,25 @@ func setup_pre_match_seed_controls():
 func initialize_teams():
 	var red_team = []
 	var blue_team = []
-	
+	var all_archetypes = Archetypes.all_names()
+
 	# Create 6 Red players
 	for i in range(6):
 		var p = Player.new()
 		p.name = "Red%d" % (i + 1)
 		p.team = "Red"
-		p.archetype = ["Hothead", "Strategist", "Ghost"][i % 3]
-		p.stats = {
-			"accuracy": 3 + randi() % 3,
-			"ferocity": 3 + randi() % 3,
-			"instinct": 3 + randi() % 3,
-			"hustle": 3 + randi() % 3,
-			"hands": 3 + randi() % 3,
-			"backbone": 3 + randi() % 3,
-		}
+		p.archetype = all_archetypes[i % all_archetypes.size()]
+		_apply_archetype(p)
 		red_team.append(p)
-	
+
 	# Create 6 Blue players
 	for i in range(6):
 		var p = Player.new()
 		p.name = "Blue%d" % (i + 1)
 		p.team = "Blue"
-		p.archetype = ["Hothead", "Strategist", "Ghost"][i % 3]
-		p.stats = {
-			"accuracy": 3 + randi() % 3,
-			"ferocity": 3 + randi() % 3,
-			"instinct": 3 + randi() % 3,
-			"hustle": 3 + randi() % 3,
-			"hands": 3 + randi() % 3,
-			"backbone": 3 + randi() % 3,
-		}
+		# Offset so Blue doesn't mirror Red's archetype order
+		p.archetype = all_archetypes[(i + 5) % all_archetypes.size()]
+		_apply_archetype(p)
 		blue_team.append(p)
 	
 	players = red_team + blue_team
@@ -258,6 +248,28 @@ func initialize_teams():
 		var pos_b = Vector2(blue_x, court_top + court_inner_pad + i * y_spacing)
 		player_positions[blue_team[i].name] = pos_b
 		player_velocities[blue_team[i].name] = Vector2.ZERO
+
+# Applies archetype stat bonuses, skill, and max_balls to a freshly created player.
+# Base roll is 3 + randi(0,1) giving 3-4, then archetype bonus applied and clamped 1-7.
+func _apply_archetype(p: Player) -> void:
+	var data = Archetypes.get_data(p.archetype)
+	if data.is_empty():
+		push_warning("Unknown archetype: %s" % p.archetype)
+		return
+
+	var bonus: Dictionary = data.get("stat_bonus", {})
+	for stat in ["accuracy", "ferocity", "instinct", "hustle", "hands", "backbone"]:
+		var base_roll = 3 + randi() % 2  # 3-4
+		p.stats[stat] = clamp(base_roll + bonus.get(stat, 0), 1, 7)
+
+	# Apply max_balls override if archetype defines one (e.g. Receptionist holds 3)
+	var max_override: int = data.get("max_balls_override", -1)
+	if max_override > 0:
+		p.max_balls = max_override
+
+	# Wire up the special skill and initial charges
+	p.special_skill = data.get("special_skill", "")
+	p.skill_charges = data.get("skill_charges", -1)
 
 func start_match():
 	var mode_str = "DEV (2-min halves)" if dev_mode else "OFFICIAL (6-min halves)"

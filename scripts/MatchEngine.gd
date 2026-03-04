@@ -1,6 +1,8 @@
 extends Node
 class_name MatchEngine
 
+const Archetypes = preload("res://scripts/Archetypes.gd")
+
 # 🧩 Core State
 var players: Array = []
 var rounds: Array = []
@@ -67,6 +69,12 @@ func give_dropped_ball(preferred_team: String):
 			var sb = b.stats["hustle"] + b.stats["instinct"]
 			return sb - sa
 		)
+		# Doorbuster Deal: always gets immediate drops first if eligible
+		for candidate in pool:
+			if candidate.special_skill == "doorbuster_deal":
+				pool.erase(candidate)
+				pool.push_front(candidate)
+				break
 		var picker: Player = pool[0]
 		picker.give_ball(1)
 		return
@@ -120,6 +128,12 @@ func _rebalance_side(team: String, pool: int) -> int:
 			var sb = b.stats["hustle"] + b.stats["instinct"]
 			return sb - sa
 		)
+		# Lap Everyone (Track Kid): always first in the rebalance queue
+		for candidate in eligible:
+			if candidate.special_skill == "lap_everyone":
+				eligible.erase(candidate)
+				eligible.push_front(candidate)
+				break
 		var picker: Player = eligible[0]
 		picker.give_ball(1)
 		remaining -= 1
@@ -141,6 +155,10 @@ func simulate_opening_rush(player_list: Array) -> void:
 
 	for p in player_list:
 		var score = p.stats["hustle"] + p.stats["ferocity"] + rng.randi_range(0, 5)
+		# I Volunteer (Soccer Mom): always wins the opening rush
+		if p.special_skill == "i_volunteer":
+			score = 9999
+			log_action("⚡ %s charged the midline first. No one was ready." % p.name)
 		ball_grab_scores.append({ "player": p, "score": score })
 
 	ball_grab_scores.sort_custom(func(a, b): return b["score"] - a["score"])
@@ -157,11 +175,16 @@ func simulate_opening_rush(player_list: Array) -> void:
 			p.reaction_timer = reaction_time
 		else:
 			p.commentary.append("😬 Missed the ball scramble.")
-			# Seed initial reaction timer for non-ball holders so they act later
 			var base_time_miss = 7.0
 			var modifier_miss = 0.5
 			var reaction_time_miss = base_time_miss - (p.stats["instinct"] * modifier_miss) + rng.randf_range(0.5, 1.5)
 			p.reaction_timer = reaction_time_miss
+
+	# Always Prepared (Scout): starts with an extra ball regardless of rush order
+	for p in player_list:
+		if p.special_skill == "always_prepared" and p.ball_count < p.max_balls:
+			p.give_ball(1)
+			log_action("🎒 %s had an extra ball ready. Of course they did." % p.name)
 
 # 🧩 Throw Resolution
 func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGenerator) -> Dictionary:
@@ -171,9 +194,39 @@ func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGener
 	dodge_power += dodge_bonus
 	# Optional dual-ball defense (off by default)
 	if DUAL_BALL_DEFENSE_ENABLED and target.ball_count >= 2:
-		# Modest extra dodge bonus when holding 2 balls; keep Stats Contract
 		dodge_power += 1
 	var catch_power = target.stats["hands"] + target.stats["backbone"]
+
+	# 🎯 Skill modifiers on throw power
+	# Protein Rage (Meathead): rage stack from revival gives +2 ferocity equivalent
+	if thrower.special_skill == "protein_rage" and thrower.skill_stacks > 0:
+		throw_power += 2
+		thrower.skill_stacks -= 1
+	# For The Content (Influencer): consumed taunt stacks boost throw
+	if thrower.special_skill == "for_the_content" and thrower.skill_stacks > 0:
+		throw_power += thrower.skill_stacks
+		thrower.skill_stacks = 0
+	# No Man Left Behind (Veteran): +1 ferocity per eliminated teammate
+	if thrower.special_skill == "no_man_left_behind":
+		var eliminated_mates = players.filter(func(p): return not p.alive and p.team == thrower.team).size()
+		throw_power += eliminated_mates
+
+	# 🛡️ Skill modifiers on dodge/catch power
+	# Pro Gamer Move (Gamer): +2 dodge when holding no ball (not engaging)
+	if target.special_skill == "pro_gamer_move" and target.ball_count == 0:
+		dodge_power += 2
+	# Leave Me Alone (Emo Kid): +3 dodge after being targeted 3+ times
+	if target.special_skill == "leave_me_alone" and target.times_targeted >= 3:
+		dodge_power += 3
+	# Flow State (Yoga Mom): +1 dodge per 2 dodge streak levels
+	if target.special_skill == "flow_state" and target.dodge_streak >= 2:
+		dodge_power += int(target.dodge_streak / 2.0)
+	# Please Don't Fire Me (Intern): all stats +2 when last alive on team
+	if target.special_skill == "please_dont_fire_me":
+		var alive_mates = players.filter(func(p): return p.alive and p.team == target.team and p != target).size()
+		if alive_mates == 0:
+			dodge_power += 2
+			catch_power += 2
 
 	# Cover bonus: if teammate is ahead (toward midline) in same lane band, add dodge, and add catch if they hold a ball
 	var cover_bonus = _get_cover_bonus(target)
@@ -356,48 +409,16 @@ func detect_clutch(round_rec: MatchRound) -> bool:
 	return abs(roll - dodge_cutoff) <= 2 or abs(roll - catch_cutoff) <= 2 or abs(roll - total) <= 2
 
 func choose_action(player: Player) -> String:
-	var options := []
-	var weights := {}
-
 	var has_ball = player.ball_count > 0
-	var _teammates_alive = players.filter(func(p): return p.alive and p.team == player.team and p != player).size()
-	var _enemies_alive = players.filter(func(p): return p.alive and p.team != player.team).size()
 
-	# 🔥 Hothead: favors throw
-	if player.archetype == "Hothead":
-		if has_ball:
-			options = ["throw", "taunt", "hold"]
-			weights = { "throw": 5, "taunt": 2, "hold": 1 }
-		else:
-			options = ["taunt", "dodge"]
-			weights = { "taunt": 3, "dodge": 2 }
-
-	# 🧠 Strategist: favors pass and hold
-	elif player.archetype == "Strategist":
-		if has_ball:
-			options = ["pass", "hold", "throw"]
-			weights = { "pass": 4, "hold": 3, "throw": 2 }
-		else:
-			options = ["dodge", "hold"]
-			weights = { "dodge": 3, "hold": 2 }
-
-	# 👻 Ghost: favors dodge and taunt
-	elif player.archetype == "Ghost":
-		if has_ball:
-			options = ["throw", "taunt", "hold"]
-			weights = { "throw": 3, "taunt": 3, "hold": 1 }
-		else:
-			options = ["dodge", "taunt"]
-			weights = { "dodge": 5, "taunt": 2 }
-
-	# 🧱 Default: balanced chaos
+	# Pull action weights from Archetypes data, fall back to balanced defaults
+	var archetype_data = Archetypes.get_data(player.archetype)
+	var weights: Dictionary
+	if has_ball:
+		weights = archetype_data.get("action_weights_ball", { "throw": 3, "pass": 2, "hold": 2, "taunt": 1 }).duplicate()
 	else:
-		if has_ball:
-			options = ["throw", "pass", "hold", "taunt"]
-			weights = { "throw": 3, "pass": 2, "hold": 2, "taunt": 1 }
-		else:
-			options = ["dodge", "taunt", "hold"]
-			weights = { "dodge": 3, "taunt": 2, "hold": 1 }
+		weights = archetype_data.get("action_weights_no_ball", { "dodge": 3, "taunt": 2, "hold": 1 }).duplicate()
+	var options = weights.keys()
 
 	# 🧠 Streak modifiers
 	if player.hit_streak >= 2:
@@ -408,6 +429,10 @@ func choose_action(player: Player) -> String:
 		weights["hold"] = weights.get("hold", 1) + 2
 	if player.dodge_streak >= 2:
 		weights["dodge"] = weights.get("dodge", 1) + 2
+
+	# 🎯 Influencer: taunt stacks boost throw weight
+	if player.special_skill == "for_the_content" and player.skill_stacks > 0:
+		weights["throw"] = weights.get("throw", 1) + player.skill_stacks
 
 	# 🎲 Weighted roll
 	var total_weight = 0
@@ -475,7 +500,17 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	if p.ball_count == 0:
 		return
 
-	var target: Player = target_pool[rng.randi_range(0, target_pool.size() - 1)]
+	# Fundamentals (PE Teacher): always targets the enemy with the lowest dodge power
+	var target: Player
+	if p.special_skill == "fundamentals":
+		target_pool.sort_custom(func(a, b):
+			var da = a.stats["instinct"] + a.stats["hustle"]
+			var db = b.stats["instinct"] + b.stats["hustle"]
+			return da - db  # ascending: weakest first
+		)
+		target = target_pool[0]
+	else:
+		target = target_pool[rng.randi_range(0, target_pool.size() - 1)]
 	var round_rec := MatchRound.new()
 	round_rec.turn = turn_count
 	round_rec.thrower = p
@@ -484,7 +519,16 @@ func simulate_throw(p: Player, current_time: float) -> void:
 	p.take_ball(1)
 
 	var target_balls_before = target.ball_count
+	# Track targeting for Leave Me Alone (Emo Kid)
+	target.times_targeted += 1
+
+	# Back In My Day (Retiree): intercept a Hit and turn it into a Catch once per match
 	var result = resolve_throw(p, target, rng)
+	if result["outcome"] == "Hit" and target.special_skill == "back_in_my_day" and target.skill_charges > 0:
+		result["outcome"] = "Caught"
+		target.skill_charges -= 1
+		log_action("👴 %s said 'not today' and caught it. Charge spent." % target.name)
+
 	round_rec.outcome = result["outcome"]
 	round_rec.throw_power = result["throw_power"]
 	round_rec.dodge_power = result["dodge_power"]
@@ -509,10 +553,22 @@ func simulate_throw(p: Player, current_time: float) -> void:
 			var modifier_catch = 0.5
 			target.reaction_timer = current_time + base_time_catch - (target.stats["instinct"] * modifier_catch) + rng.randf_range(0.0, 1.0)
 		"Hit":
-			# Thrown ball + any held by target drop on target side; tiny bounce chance
-			_add_loose_balls(target.team, target_balls_before + 1, 0.05)
-			round_rec.ball_holder_after = null
-			target.drop_all_balls()
+			# Participation Trophy (Coach's Kid): free auto-revive once per match
+			if target.special_skill == "participation_trophy" and target.skill_charges > 0:
+				target.skill_charges -= 1
+				log_action("🏆 %s got eliminated but dad pulled some strings. They're back." % target.name)
+				# Don't call eliminate — they stay alive, just lose their balls
+				_add_loose_balls(target.team, target_balls_before + 1, 0.05)
+				target.drop_all_balls()
+				round_rec.ball_holder_after = null
+			else:
+				# Thrown ball + any held by target drop on target side; tiny bounce chance
+				_add_loose_balls(target.team, target_balls_before + 1, 0.05)
+				round_rec.ball_holder_after = null
+				target.drop_all_balls()
+				# Protein Rage (Meathead): when eliminated, arm a rage stack for when they revive
+				if target.special_skill == "protein_rage":
+					target.skill_stacks = 1
 		"Dodged":
 			# Missed throw becomes a loose ball on target side; tiny bounce chance
 			_add_loose_balls(target.team, 1, 0.05)
@@ -641,6 +697,11 @@ func simulate_taunt(p: Player, current_time: float) -> void:
 	round_rec.commentary = line
 	round_rec.ball_holder_after = p if p.ball_count > 0 else null
 
+	# For The Content (Influencer): each taunt builds a throw power stack (max 3)
+	if p.special_skill == "for_the_content":
+		p.skill_stacks = min(p.skill_stacks + 1, 3)
+		log_action("📸 %s is feeling it. Throw power stacks: %d" % [p.name, p.skill_stacks])
+
 	rounds.append(round_rec)
 	var msg_taunt = "💬 %.2f | %s taunted" % [current_time, p.name]
 	log_action(msg_taunt)
@@ -738,6 +799,10 @@ func reset_players():
 		p.reset()
 		p.commentary.clear()
 		p.reaction_timer = 0.0
+		# Restore skill charges from archetype data (one-shot skills reload each match)
+		var archetype_data = Archetypes.get_data(p.archetype)
+		if archetype_data.has("skill_charges"):
+			p.skill_charges = archetype_data["skill_charges"]
 
 	rounds.clear()
 	turn_count = 0

@@ -11,11 +11,34 @@ var stats: Dictionary = {
 	"hands": 0,
 	"backbone": 0
 }
+
+# 🌱 Progression fields
+var age: int = 20                  # Age affects retirement risk and training ceiling
+var sweat: int = 0                 # XP earned through matches and training
+var training_ceiling: int = 0      # Max potential (hidden until scouted via Creep Sheet)
+
+# 🎯 Special skill
+var special_skill: String = ""     # Skill ID (matches keys in MatchEngine skill handlers)
+var skill_charges: int = -1        # Uses remaining. -1 = passive (unlimited)
+var skill_stacks: int = 0          # Condition counter (e.g. taunt stacks, rage charges)
+
+# ⚡ Per-match skill tracking (reset each match)
+var times_targeted: int = 0        # Used by Leave Me Alone (Emo Kid)
+
+# 🏐 Ball state
 var alive: bool = true
 var ball_count: int = 0
 var max_balls: int = 2
 var reaction_timer: float = 0.0
 var commentary: Array = []
+
+# 📊 Streak tracking
+var hit_streak: int = 0
+var dodge_streak: int = 0
+var catch_streak: int = 0
+var clutch_streak: int = 0
+var max_ball_count: int = 0
+var times_eliminated: int = 0
 
 func revive():
 	alive = true
@@ -24,14 +47,6 @@ func eliminate():
 	alive = false
 	drop_all_balls()
 	times_eliminated += 1
-	
-# Streaks
-var hit_streak: int = 0
-var dodge_streak: int = 0
-var catch_streak: int = 0
-var clutch_streak: int = 0
-var max_ball_count: int = 0
-var times_eliminated: int = 0
 
 func reset():
 	alive = true
@@ -42,6 +57,9 @@ func reset():
 	clutch_streak = 0
 	max_ball_count = 0
 	times_eliminated = 0
+	skill_stacks = 0
+	times_targeted = 0
+	# skill_charges is restored by MatchEngine.reset_players() from archetype data
 
 func give_ball(count: int = 1):
 	ball_count = clamp(ball_count + count, 0, max_balls)
@@ -52,7 +70,7 @@ func take_ball(count: int = 1):
 
 func drop_all_balls():
 	ball_count = 0
-	
+
 func to_dict() -> Dictionary:
 	return {
 		"name": name,
@@ -60,6 +78,10 @@ func to_dict() -> Dictionary:
 		"archetype": archetype,
 		"alive": alive,
 		"ball_count": ball_count,
+		"age": age,
+		"sweat": sweat,
+		"training_ceiling": training_ceiling,
+		"special_skill": special_skill,
 		"stats": stats,
 		"streaks": {
 			"hit": hit_streak,
