@@ -1,7 +1,7 @@
 extends Node2D
 class_name GameUI
 
-const Archetypes = preload("res://scripts/Archetypes.gd")
+const ArchetypeDB = preload("res://scripts/Archetypes.gd")
 
 var match_engine: MatchEngine
 var players: Array = []
@@ -211,7 +211,7 @@ func setup_pre_match_seed_controls():
 func initialize_teams():
 	var red_team = []
 	var blue_team = []
-	var all_archetypes = Archetypes.all_names()
+	var all_archetypes = ArchetypeDB.all_names()
 
 	# Create 6 Red players
 	for i in range(6):
@@ -253,7 +253,7 @@ func initialize_teams():
 # Base roll is 3 + randi(0,1) giving 3-4, then archetype bonus applied and clamped 1-7.
 # stat_min floors are then applied per-archetype to preserve identity-defining traits.
 func _apply_archetype(p: Player) -> void:
-	var data = Archetypes.get_data(p.archetype)
+	var data = ArchetypeDB.get_data(p.archetype)
 	if data.is_empty():
 		push_warning("Unknown archetype: %s" % p.archetype)
 		return
@@ -264,6 +264,9 @@ func _apply_archetype(p: Player) -> void:
 		var base_roll = 3 + randi() % 2  # 3-4
 		var rolled = clamp(base_roll + bonus.get(stat, 0), 1, 7)
 		p.stats[stat] = max(rolled, mins.get(stat, 1))
+		# Ceiling = starting value + random growth room (1-4), capped at 7.
+		# Hidden until scouted. High ceiling = rare — most players have 1-2 room per stat.
+		p.training_ceiling[stat] = min(p.stats[stat] + 1 + randi() % 4, 7)
 
 	# Apply max_balls override if archetype defines one (e.g. Receptionist holds 3)
 	var max_override: int = data.get("max_balls_override", -1)
@@ -651,6 +654,7 @@ func _input(event):
 func end_match(winner: String):
 	match_running = false
 	var summary = match_engine.generate_match_summary(match_engine.rounds)
+	match_engine.award_match_sweat(summary, winner)
 	var mvp = match_engine.detect_mvp(summary)
 
 	if winner == "Draw":
@@ -664,6 +668,16 @@ func end_match(winner: String):
 	print("==================================================")
 	match_engine.print_match_summary(summary)
 	
+	# Debug: log sweat earned and stat ceilings for each player
+	print("\n💦 SWEAT + CEILINGS (debug)")
+	print("────────────────────────────")
+	for p in match_engine.players:
+		var ceiling_str = ""
+		for stat in ["accuracy", "ferocity", "instinct", "hustle", "hands", "backbone"]:
+			ceiling_str += "%s:%d/%d  " % [stat.left(3), p.stats[stat], p.training_ceiling.get(stat, 7)]
+		print("  %s [%s]  sweat=%d" % [p.name, p.archetype, p.sweat])
+		print("    %s" % ceiling_str)
+
 	# Show stats overlay panel
 	show_stats_panel(winner, mvp, summary)
 

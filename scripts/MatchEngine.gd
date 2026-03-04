@@ -1,7 +1,7 @@
 extends Node
 class_name MatchEngine
 
-const Archetypes = preload("res://scripts/Archetypes.gd")
+const ArchetypeDB = preload("res://scripts/Archetypes.gd")
 
 # 🧩 Core State
 var players: Array = []
@@ -414,8 +414,8 @@ func detect_clutch(round_rec: MatchRound) -> bool:
 func choose_action(player: Player) -> String:
 	var has_ball = player.ball_count > 0
 
-	# Pull action weights from Archetypes data, fall back to balanced defaults
-	var archetype_data = Archetypes.get_data(player.archetype)
+	# Pull action weights from ArchetypeDB data, fall back to balanced defaults
+	var archetype_data = ArchetypeDB.get_data(player.archetype)
 	var weights: Dictionary
 	if has_ball:
 		weights = archetype_data.get("action_weights_ball", { "throw": 3, "pass": 2, "hold": 2, "taunt": 1 }).duplicate()
@@ -788,6 +788,33 @@ func calculate_impact_score(stats: Dictionary) -> int:
 		stats.get("ball_control", 0) * 1
 	)
 
+# Awards sweat to each player based on their match performance.
+# Call this after generate_match_summary(), passing the same summary dict.
+# Sweat rates: hit=5, catch=6, dodge=2, pass=3, taunt=1, just_played=2 (everyone gets base).
+# MVP gets a +5 bonus on top. Winning team gets +3.
+func award_match_sweat(summary: Dictionary, winner: String) -> void:
+	var mvp_data = detect_mvp(summary)
+	var player_map := {}
+	for p in players:
+		player_map[p.name] = p
+
+	for player_name in summary.keys():
+		if not player_map.has(player_name):
+			continue
+		var p = player_map[player_name]
+		var s = summary[player_name]
+		var earned: int = 2  # base participation
+		earned += s.get("hits", 0) * 5
+		earned += s.get("catches", 0) * 6
+		earned += s.get("dodges", 0) * 2
+		earned += s.get("passes", 0) * 3
+		earned += s.get("taunts", 0) * 1
+		if p.team == winner:
+			earned += 3
+		if player_name == mvp_data.get("name", ""):
+			earned += 5
+		p.sweat += earned
+
 func detect_mvp(summary: Dictionary) -> Dictionary:
 	var best := { "name": "", "score": -1 }
 	for player_name in summary.keys():
@@ -803,7 +830,7 @@ func reset_players():
 		p.commentary.clear()
 		p.reaction_timer = 0.0
 		# Restore skill charges from archetype data (one-shot skills reload each match)
-		var archetype_data = Archetypes.get_data(p.archetype)
+		var archetype_data = ArchetypeDB.get_data(p.archetype)
 		if archetype_data.has("skill_charges"):
 			p.skill_charges = archetype_data["skill_charges"]
 

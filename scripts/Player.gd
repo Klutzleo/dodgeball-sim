@@ -15,7 +15,17 @@ var stats: Dictionary = {
 # 🌱 Progression fields
 var age: int = 20                  # Age affects retirement risk and training ceiling
 var sweat: int = 0                 # XP earned through matches and training
-var training_ceiling: int = 0      # Max potential (hidden until scouted via Creep Sheet)
+
+# Per-stat ceilings — hidden until scouted via Creep Sheet.
+# A stat can never be trained above its ceiling (max 7).
+var training_ceiling: Dictionary = {
+	"accuracy": 7,
+	"ferocity": 7,
+	"instinct": 7,
+	"hustle": 7,
+	"hands": 7,
+	"backbone": 7
+}
 
 # 🎯 Special skill
 var special_skill: String = ""     # Skill ID (matches keys in MatchEngine skill handlers)
@@ -70,6 +80,32 @@ func take_ball(count: int = 1):
 
 func drop_all_balls():
 	ball_count = 0
+
+# Spend sweat to raise a stat by 1 toward its ceiling.
+# Cost = 5 * current_stat_value (so growing 3→4 costs 15, 6→7 costs 30).
+# Returns true if training succeeded, false if blocked (at ceiling or not enough sweat).
+func train_stat(stat: String) -> bool:
+	if not stats.has(stat):
+		return false
+	var current: int = stats[stat]
+	var ceiling: int = training_ceiling.get(stat, 7)
+	if current >= ceiling:
+		return false
+	var cost: int = 5 * current
+	if sweat < cost:
+		return false
+	sweat -= cost
+	stats[stat] += 1
+	return true
+
+# How much sweat it costs to train a given stat next (0 if already at ceiling).
+func train_cost(stat: String) -> int:
+	if not stats.has(stat):
+		return 0
+	var current: int = stats[stat]
+	if current >= training_ceiling.get(stat, 7):
+		return 0
+	return 5 * current
 
 func to_dict() -> Dictionary:
 	return {
