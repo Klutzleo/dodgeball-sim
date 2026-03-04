@@ -53,6 +53,8 @@ var pre_apply_seed_button: Button = null
 # Training Room panel
 var training_panel: Panel = null
 var training_scroll_vbox: VBoxContainer = null
+var training_pending: Dictionary = {}   # "PlayerName:stat" -> pending train count
+var training_cost_label: Label = null   # shows total pending sweat cost
 
 func _ready():
 	set_process(true)
@@ -92,9 +94,12 @@ func _ready():
 	# Create pre-match seed controls (always visible)
 	setup_pre_match_seed_controls()
 	
-	# Initialize players after bounds are set so positions land inside the court
+	# Initialize players after bounds are set so positions land inside the court.
+	# initialize_teams() always runs to set up Player objects + court positions.
+	# load_players() then overwrites stats/sweat/ceiling if a save file exists.
 	initialize_teams()
-	
+	load_players()
+
 	# Auto-start match after scene loads
 	await get_tree().process_frame
 	start_match()
@@ -166,10 +171,17 @@ func setup_stats_panel():
 
 	# Restart button
 	var restart_button = Button.new()
-	restart_button.text = "Restart Match"
+	restart_button.text = "New Match"
 	restart_button.custom_minimum_size = Vector2(160, 40)
 	restart_button.pressed.connect(_on_restart_match)
 	vbox.add_child(restart_button)
+
+	# Rematch button — replays the exact same seed
+	var rematch_button = Button.new()
+	rematch_button.text = "Rematch 🔁"
+	rematch_button.custom_minimum_size = Vector2(160, 40)
+	rematch_button.pressed.connect(_on_rematch)
+	vbox.add_child(rematch_button)
 
 	# Training Room button
 	var training_button = Button.new()
@@ -346,6 +358,9 @@ func _restart_match(seed_val: int = -1) -> void:
 
 func _on_restart_match():
 	_restart_match()
+
+func _on_rematch():
+	_restart_match(match_engine.match_seed)
 
 func _on_apply_seed_replay():
 	var seed_text = seed_input.text.strip_edges()
@@ -805,29 +820,136 @@ func setup_training_panel():
 	training_scroll_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(training_scroll_vbox)
 
-	# Close button
+	# Footer: pending cost + confirm/cancel/close buttons
 	var spacer2 = Control.new()
 	spacer2.custom_minimum_size = Vector2(0, 8)
 	outer.add_child(spacer2)
 
+	training_cost_label = Label.new()
+	training_cost_label.text = "Pending: nothing queued"
+	training_cost_label.add_theme_font_size_override("font_size", 13)
+	training_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	outer.add_child(training_cost_label)
+
+	var btn_row = HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	outer.add_child(btn_row)
+
+	var confirm_btn = Button.new()
+	confirm_btn.text = "✅ Confirm Training"
+	confirm_btn.custom_minimum_size = Vector2(180, 36)
+	confirm_btn.pressed.connect(_on_confirm_training)
+	btn_row.add_child(confirm_btn)
+
+	var cancel_btn = Button.new()
+	cancel_btn.text = "❌ Cancel"
+	cancel_btn.custom_minimum_size = Vector2(120, 36)
+	cancel_btn.pressed.connect(_on_cancel_training)
+	btn_row.add_child(cancel_btn)
+
 	var close_btn = Button.new()
-	close_btn.text = "Close Training Room"
-	close_btn.custom_minimum_size = Vector2(200, 36)
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(100, 36)
 	close_btn.pressed.connect(_on_close_training_panel)
-	outer.add_child(close_btn)
+	btn_row.add_child(close_btn)
 
 func _on_open_training_room():
 	if stats_panel:
 		stats_panel.visible = false
+	training_pending.clear()
 	_rebuild_training_rows()
 	training_panel.visible = true
 
 func _on_close_training_panel():
+	training_pending.clear()
 	training_panel.visible = false
 	if stats_panel:
 		stats_panel.visible = true
 
-# Clears and repopulates all player rows. Called on open and after each train action.
+func _on_cancel_training():
+	training_pending.clear()
+	_rebuild_training_rows()
+
+func _on_confirm_training():
+	# Apply all pending trains in order — each successive train on the same stat
+	# costs more, so we process them one at a time using train_stat().
+	for key in training_pending.keys():
+		var parts = key.split(":")
+		var pname = parts[0]
+		var stat = parts[1]
+		var count = training_pending[key]
+		var p = _find_player(pname)
+		if p:
+			for _i in range(count):
+				p.train_stat(stat)
+	training_pending.clear()
+	save_players()
+	_rebuild_training_rows()
+
+func _find_player(player_name: String) -> Player:
+	for p in players:
+		if p.name == player_name:
+			return p
+	return null
+
+# ─── Save / Load ──────────────────────────────────────────────────────────────
+const SAVE_PATH = "user://roster.json"
+
+# Writes every player's progression data to disk.
+# Called automatically after confirming training.
+func save_players() -> void:
+	var roster = []
+	for p in players:
+		roster.append({
+			"name": p.name,
+			"team": p.team,
+			"archetype": p.archetype,
+			"age": p.age,
+			"sweat": p.sweat,
+			"stats": p.stats.duplicate(),
+			"training_ceiling": p.training_ceiling.duplicate()
+		})
+	var file = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(roster, "\t"))
+		file.close()
+		print("💾 Roster saved (%d players)" % roster.size())
+	else:
+		push_warning("save_players: could not open %s for writing" % SAVE_PATH)
+
+# Loads progression data from disk and applies it to the current player list.
+# initialize_teams() must run first to create the Player objects and positions.
+# Players are matched by name — unknown names in the save file are ignored.
+func load_players() -> void:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return
+	var file = FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if not file:
+		push_warning("load_players: could not open %s" % SAVE_PATH)
+		return
+	var raw = file.get_as_text()
+	file.close()
+	var parsed = JSON.parse_string(raw)
+	if not parsed is Array:
+		push_warning("load_players: unexpected save format")
+		return
+	for entry in parsed:
+		var p = _find_player(entry.get("name", ""))
+		if not p:
+			continue
+		p.age   = entry.get("age", p.age)
+		p.sweat = entry.get("sweat", 0)
+		var saved_stats: Dictionary = entry.get("stats", {})
+		for stat in p.stats.keys():
+			if saved_stats.has(stat):
+				p.stats[stat] = int(saved_stats[stat])
+		var saved_ceil: Dictionary = entry.get("training_ceiling", {})
+		for stat in p.training_ceiling.keys():
+			if saved_ceil.has(stat):
+				p.training_ceiling[stat] = int(saved_ceil[stat])
+	print("📂 Roster loaded from save")
+
+# Clears and repopulates all player rows based on current stats + pending queue.
 func _rebuild_training_rows():
 	for child in training_scroll_vbox.get_children():
 		child.queue_free()
@@ -835,39 +957,61 @@ func _rebuild_training_rows():
 	var stat_keys = ["accuracy", "ferocity", "instinct", "hustle", "hands", "backbone"]
 	var stat_labels = ["ACC", "FER", "INS", "HUS", "HAN", "BAC"]
 
+	# Simulate what stats/sweat will look like after pending trains
+	# so the UI reflects the real cost in sequence.
 	for p in players:
-		# Player header row
+		# Project stats forward through pending queue for this player
+		var projected = p.stats.duplicate()
+		var projected_sweat = p.sweat
+		for stat in stat_keys:
+			var key = "%s:%s" % [p.name, stat]
+			var count = training_pending.get(key, 0)
+			for _i in range(count):
+				var cost = 5 * projected[stat]
+				projected_sweat -= cost
+				projected[stat] += 1
+
+		# Player header
+		var sweat_str = "💦 %d" % p.sweat
+		if projected_sweat != p.sweat:
+			sweat_str += " → %d" % projected_sweat
 		var header = Label.new()
-		header.text = "%s  [%s]   💦 Sweat: %d" % [p.name, p.archetype, p.sweat]
+		header.text = "%s  [%s]   %s" % [p.name, p.archetype, sweat_str]
 		header.add_theme_font_size_override("font_size", 14)
 		training_scroll_vbox.add_child(header)
 
-		# Stat buttons row
+		# Stat buttons
 		var hbox = HBoxContainer.new()
-		hbox.custom_minimum_size = Vector2(0, 38)
+		hbox.custom_minimum_size = Vector2(0, 42)
 		training_scroll_vbox.add_child(hbox)
 
 		for i in range(stat_keys.size()):
 			var stat = stat_keys[i]
-			var current: int = p.stats[stat]
+			var key = "%s:%s" % [p.name, stat]
+			var pending_count: int = training_pending.get(key, 0)
+			var proj_val: int = projected[stat]
 			var ceiling: int = p.training_ceiling.get(stat, 7)
-			var cost: int = p.train_cost(stat)
-			var at_cap: bool = current >= ceiling
-			var can_afford: bool = p.sweat >= cost and not at_cap
+			var next_cost: int = 5 * proj_val
+			var at_cap: bool = proj_val >= ceiling
+			var can_afford: bool = projected_sweat >= next_cost and not at_cap
 
 			var btn = Button.new()
 			if at_cap:
-				btn.text = "%s: %d/MAX" % [stat_labels[i], current]
+				if pending_count > 0:
+					btn.text = "%s: %d+%d/MAX" % [stat_labels[i], p.stats[stat], pending_count]
+				else:
+					btn.text = "%s: %d/MAX" % [stat_labels[i], p.stats[stat]]
 			else:
-				btn.text = "%s: %d/%d\n(cost %d)" % [stat_labels[i], current, ceiling, cost]
-			btn.custom_minimum_size = Vector2(108, 36)
+				if pending_count > 0:
+					btn.text = "%s: %d+%d/%d\n(next %d)" % [stat_labels[i], p.stats[stat], pending_count, ceiling, next_cost]
+				else:
+					btn.text = "%s: %d/%d\n(cost %d)" % [stat_labels[i], p.stats[stat], ceiling, next_cost]
+			btn.custom_minimum_size = Vector2(112, 42)
 			btn.disabled = not can_afford
 
-			# Capture p and stat for the lambda
-			var captured_player = p
-			var captured_stat = stat
+			var captured_key = key
 			btn.pressed.connect(func():
-				captured_player.train_stat(captured_stat)
+				training_pending[captured_key] = training_pending.get(captured_key, 0) + 1
 				_rebuild_training_rows()
 			)
 			hbox.add_child(btn)
@@ -875,3 +1019,20 @@ func _rebuild_training_rows():
 		# Divider
 		var sep = HSeparator.new()
 		training_scroll_vbox.add_child(sep)
+
+	# Update pending cost summary label
+	var total_cost = 0
+	var total_trains = 0
+	for p in players:
+		var proj = p.stats.duplicate()
+		for stat in stat_keys:
+			var key = "%s:%s" % [p.name, stat]
+			var count = training_pending.get(key, 0)
+			for _i in range(count):
+				total_cost += 5 * proj[stat]
+				proj[stat] += 1
+				total_trains += 1
+	if total_trains == 0:
+		training_cost_label.text = "Nothing queued — click stats to queue training"
+	else:
+		training_cost_label.text = "%d train(s) queued — total cost: %d 💦 sweat" % [total_trains, total_cost]
