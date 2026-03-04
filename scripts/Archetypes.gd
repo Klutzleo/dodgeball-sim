@@ -11,6 +11,7 @@ const ROSTER: Dictionary = {
 	"Meathead": {
 		"description": "Pure gym energy, zero strategy.",
 		"stat_bonus": { "ferocity": 2, "accuracy": 1, "instinct": -1, "backbone": -1, "hustle": 0, "hands": 0 },
+		"stat_min": { "ferocity": 4 },  # always a genuine threat
 		"action_weights_ball":    { "throw": 6, "taunt": 2, "hold": 1 },
 		"action_weights_no_ball": { "taunt": 3, "dodge": 2 },
 		"special_skill": "protein_rage",
@@ -27,6 +28,7 @@ const ROSTER: Dictionary = {
 	"Gamer": {
 		"description": "Inhuman reflexes. Zero cardio.",
 		"stat_bonus": { "instinct": 2, "hands": 1, "hustle": -2, "ferocity": -1, "accuracy": 0, "backbone": 0 },
+		"stat_min": { "instinct": 4 },  # reflexes are always elite
 		"action_weights_ball":    { "throw": 3, "hold": 3, "pass": 1 },
 		"action_weights_no_ball": { "dodge": 5, "hold": 2 },
 		"special_skill": "pro_gamer_move",
@@ -43,6 +45,7 @@ const ROSTER: Dictionary = {
 	"Receptionist": {
 		"description": "Has seen worse. Completely unphased.",
 		"stat_bonus": { "backbone": 2, "hands": 1, "ferocity": -2, "accuracy": -1, "instinct": 0, "hustle": 0 },
+		"stat_min": { "backbone": 4 },  # unphased by definition
 		"action_weights_ball":    { "hold": 4, "pass": 3, "throw": 1 },
 		"action_weights_no_ball": { "dodge": 2, "hold": 3 },
 		"special_skill": "hold_please",
@@ -75,6 +78,7 @@ const ROSTER: Dictionary = {
 	"PE Teacher": {
 		"description": "Fundamentally sound. Knees are shot.",
 		"stat_bonus": { "accuracy": 2, "backbone": 1, "hustle": -2, "instinct": 0, "ferocity": 0, "hands": 0 },
+		"stat_min": { "accuracy": 4 },  # textbook form, always
 		"action_weights_ball":    { "throw": 4, "hold": 3, "pass": 2 },
 		"action_weights_no_ball": { "dodge": 3, "hold": 2 },
 		"special_skill": "fundamentals",
@@ -123,6 +127,7 @@ const ROSTER: Dictionary = {
 	"Coach's Kid": {
 		"description": "Unearned confidence. Mediocre talent.",
 		"stat_bonus": { "backbone": 2, "accuracy": -1, "instinct": -1, "ferocity": 0, "hustle": 0, "hands": 0 },
+		"stat_min": { "backbone": 4 },  # confidence never wavers, earned or not
 		"action_weights_ball":    { "throw": 3, "hold": 4, "taunt": 2 },
 		"action_weights_no_ball": { "dodge": 2, "hold": 3, "taunt": 2 },
 		"special_skill": "participation_trophy",
@@ -139,6 +144,7 @@ const ROSTER: Dictionary = {
 	"Yoga Mom": {
 		"description": "Suspiciously flexible. Annoyingly calm.",
 		"stat_bonus": { "instinct": 2, "backbone": 1, "ferocity": -2, "accuracy": -1, "hustle": 0, "hands": 0 },
+		"stat_min": { "instinct": 4, "backbone": 3 },  # always centered, never rattled
 		"action_weights_ball":    { "hold": 3, "throw": 2, "pass": 2 },
 		"action_weights_no_ball": { "dodge": 5, "hold": 2 },
 		"special_skill": "flow_state",
@@ -155,6 +161,7 @@ const ROSTER: Dictionary = {
 	"Soccer Mom": {
 		"description": "Spent 12 years on the sideline. Now it's her turn.",
 		"stat_bonus": { "ferocity": 2, "hustle": 1, "backbone": 1, "accuracy": -1, "hands": -2, "instinct": 0 },
+		"stat_min": { "ferocity": 4, "hustle": 3 },  # twelve years of pent-up energy, minimum
 		"action_weights_ball":    { "throw": 5, "taunt": 3, "hold": 1 },
 		"action_weights_no_ball": { "taunt": 3, "dodge": 2, "hold": 1 },
 		"special_skill": "i_volunteer",
@@ -171,6 +178,7 @@ const ROSTER: Dictionary = {
 	"Retiree": {
 		"description": "68 years old. Been playing since before you were born.",
 		"stat_bonus": { "accuracy": 2, "backbone": 1, "hustle": -2, "ferocity": -1, "instinct": 0, "hands": 0 },
+		"stat_min": { "accuracy": 4 },  # decades of experience guarantees aim
 		"action_weights_ball":    { "throw": 3, "hold": 4, "pass": 1 },
 		"action_weights_no_ball": { "hold": 3, "dodge": 2 },
 		"special_skill": "back_in_my_day",
@@ -187,6 +195,7 @@ const ROSTER: Dictionary = {
 	"Veteran": {
 		"description": "Discipline and pain tolerance.",
 		"stat_bonus": { "backbone": 2, "accuracy": 1, "hustle": -1, "instinct": 0, "ferocity": 0, "hands": 0 },
+		"stat_min": { "backbone": 5 },  # doesn't break. period.
 		"action_weights_ball":    { "throw": 4, "pass": 3, "hold": 2 },
 		"action_weights_no_ball": { "dodge": 3, "hold": 2 },
 		"special_skill": "no_man_left_behind",
@@ -203,10 +212,11 @@ const ROSTER: Dictionary = {
 	"Boy/Girl Scout": {
 		"description": "Absurdly prepared for everything.",
 		"stat_bonus": { "hands": 2, "instinct": 1, "ferocity": -1, "accuracy": 0, "hustle": 0, "backbone": 0 },
+		"stat_min": { "hands": 4, "instinct": 3 },  # always prepared means always capable
 		"action_weights_ball":    { "pass": 4, "throw": 3, "hold": 2 },
 		"action_weights_no_ball": { "dodge": 3, "hold": 2 },
 		"special_skill": "always_prepared",
-		"skill_charges": -1,  # passive — starts with extra ball
+		"skill_charges": -1,  # passive — pre-positioned for rush, guaranteed ball + instant first reaction
 		"max_balls_override": -1,
 		"commentary": {
 			"Hit":    "%s had already identified the optimal target and release angle. %s is out.",
@@ -219,6 +229,7 @@ const ROSTER: Dictionary = {
 	"Track Kid": {
 		"description": "Runs a 4.4. Never stops moving.",
 		"stat_bonus": { "hustle": 3, "instinct": 1, "ferocity": -1, "accuracy": -1, "hands": -1, "backbone": 0 },
+		"stat_min": { "hustle": 5 },  # a 4.4 forty is not a sometimes thing
 		"action_weights_ball":    { "throw": 4, "pass": 3, "hold": 1 },
 		"action_weights_no_ball": { "dodge": 4, "hold": 1 },
 		"special_skill": "lap_everyone",
@@ -235,6 +246,7 @@ const ROSTER: Dictionary = {
 	"Black Friday Doorbuster": {
 		"description": "Has survived worse. A dodgeball court is practically a spa day.",
 		"stat_bonus": { "hustle": 2, "ferocity": 1, "backbone": -2, "instinct": 0, "accuracy": 0, "hands": 0 },
+		"stat_min": { "hustle": 4 },  # always first to the ball. no exceptions.
 		"action_weights_ball":    { "throw": 4, "hold": 2, "taunt": 1 },
 		"action_weights_no_ball": { "dodge": 3, "hold": 2, "taunt": 1 },
 		"special_skill": "doorbuster_deal",

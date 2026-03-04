@@ -180,11 +180,14 @@ func simulate_opening_rush(player_list: Array) -> void:
 			var reaction_time_miss = base_time_miss - (p.stats["instinct"] * modifier_miss) + rng.randf_range(0.5, 1.5)
 			p.reaction_timer = reaction_time_miss
 
-	# Always Prepared (Scout): starts with an extra ball regardless of rush order
-	for p in player_list:
-		if p.special_skill == "always_prepared" and p.ball_count < p.max_balls:
-			p.give_ball(1)
-			log_action("🎒 %s had an extra ball ready. Of course they did." % p.name)
+	# Always Prepared (Scout): pre-positioned perfectly — guaranteed ball and fastest first reaction
+	for entry in ball_grab_scores:
+		var p: Player = entry["player"]
+		if p.special_skill == "always_prepared" and p.ball_count > 0:
+			# They scouted the court beforehand — react immediately
+			p.reaction_timer = 1.0
+			log_action("🎒 %s had already mapped the court. First to act." % p.name)
+			break
 
 # 🧩 Throw Resolution
 func resolve_throw(thrower: Player, target: Player, rng_local: RandomNumberGenerator) -> Dictionary:

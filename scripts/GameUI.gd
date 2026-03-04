@@ -251,6 +251,7 @@ func initialize_teams():
 
 # Applies archetype stat bonuses, skill, and max_balls to a freshly created player.
 # Base roll is 3 + randi(0,1) giving 3-4, then archetype bonus applied and clamped 1-7.
+# stat_min floors are then applied per-archetype to preserve identity-defining traits.
 func _apply_archetype(p: Player) -> void:
 	var data = Archetypes.get_data(p.archetype)
 	if data.is_empty():
@@ -258,9 +259,11 @@ func _apply_archetype(p: Player) -> void:
 		return
 
 	var bonus: Dictionary = data.get("stat_bonus", {})
+	var mins: Dictionary = data.get("stat_min", {})
 	for stat in ["accuracy", "ferocity", "instinct", "hustle", "hands", "backbone"]:
 		var base_roll = 3 + randi() % 2  # 3-4
-		p.stats[stat] = clamp(base_roll + bonus.get(stat, 0), 1, 7)
+		var rolled = clamp(base_roll + bonus.get(stat, 0), 1, 7)
+		p.stats[stat] = max(rolled, mins.get(stat, 1))
 
 	# Apply max_balls override if archetype defines one (e.g. Receptionist holds 3)
 	var max_override: int = data.get("max_balls_override", -1)
